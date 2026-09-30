@@ -5,8 +5,9 @@
 
 set -e
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
+. "$ROOT_DIR/scripts/env.sh"
 SRC_DIR=$ROOT_DIR/wasm-benchmarks/wasm-r3-bench
-DEST_DIR=$ROOT_DIR/modules_to_bench
+DEST_DIR=$MODULES_TO_BENCH_DIR
 MODULES_FILE=$ROOT_DIR/modules_to_bench.txt
 
 echo "> Copying modules listed in $MODULES_FILE to $DEST_DIR"
