@@ -7,6 +7,10 @@
 # Runs Wasmito analyses (through the Wasmito CLI, `cli.cjs analysis`) on
 # every Wasm module in --modules, --runs times per (analysis, module).
 #
+# The analyses are listed in wasmito_analyses.txt in the root of
+# wasmito-benchmark, one per line (blank lines are ignored and # starts a
+# comment). Add a line there to run a new analysis.
+#
 # The Wasmito CLI and the modules come from env.sh, so the script can be
 # run from any directory. Relative paths given as options are resolved
 # against the current directory.
@@ -21,7 +25,8 @@
 #       (output/wasmito/ in the root of wasmito-benchmark).
 #   --analysis <name[,name...]|all>
 #       the analyses to run, comma-separated (e.g. 'call-graph,imix'), or
-#       'all'. Defaults to all (see ANALYSES below).
+#       'all'. Every name must be listed in wasmito_analyses.txt. Defaults
+#       to all: every analysis in wasmito_analyses.txt.
 #   --runs <n>
 #       how many times each analysis is run per module. Defaults to 1.
 #   --timeout <seconds>
@@ -45,23 +50,22 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 CLI="$WASMITO_DIR/dist/cjs/cli/cli.cjs"
 
-ANALYSES=(
-  no-analysis
-  branches
-  icount
-  imix
-  hotness
-  cache_sim
-  mem_access
-  loop_tracer
-  basic-block
-  instr-coverage
-  call-graph
-  cryptomining
-  denan
-  instruction-mix
-  safe-heap
-)
+ANALYSES_FILE="$ROOT_DIR/wasmito_analyses.txt"
+
+if [ ! -f "$ANALYSES_FILE" ]; then
+  echo "Error: analyses file '$ANALYSES_FILE' does not exist" >&2
+  exit 1
+fi
+ANALYSES=()
+while IFS= read -r line || [ -n "$line" ]; do
+  line="${line%%#*}"
+  line="$(echo "$line" | xargs)"
+  [ -n "$line" ] && ANALYSES+=("$line")
+done < "$ANALYSES_FILE"
+if [ "${#ANALYSES[@]}" -eq 0 ]; then
+  echo "Error: no analyses listed in '$ANALYSES_FILE'" >&2
+  exit 1
+fi
 
 WASM_PATH="$MODULES_TO_BENCH_DIR"
 RESULTS_DIR="$OUTPUT_DIR/wasmito"
@@ -158,7 +162,7 @@ if [ "$ANALYSIS_ARG" != "all" ]; then
       fi
     done
     if [ "$found" -eq 0 ]; then
-      fail_usage "unknown analysis '$requested'"
+      fail_usage "unknown analysis '$requested' (not listed in $ANALYSES_FILE)"
     fi
     ANALYSES_TO_RUN+=("$requested")
   done

@@ -1,0 +1,11 @@
+no-analysis
+branches
+icount
+imix
+hotness
+cache_sim
+mem_access
+loop_tracer
+basic-block
+instr-coverage
+call-graph
