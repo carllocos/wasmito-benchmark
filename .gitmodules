@@ -1,0 +1,16 @@
+[submodule "wasmito"]
+	path = wasmito
+	url = https://github.com/carllocos/Wasmito.git
+	branch = main
+[submodule "wasm-benchmarks"]
+	path = wasm-benchmarks
+	url = https://github.com/doehyunbaek/wasm-benchmarks.git
+[submodule "whamm"]
+	path = whamm
+	url = https://github.com/ejrgilbert/whamm.git
+[submodule "virgil"]
+	path = virgil
+	url = https://github.com/titzer/virgil.git
+[submodule "wizard"]
+	path = wizard
+	url = https://github.com/titzer/wizard-engine.git
