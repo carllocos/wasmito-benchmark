@@ -42,11 +42,11 @@
 # Options (all optional, in any order; --flag value or --flag=value):
 #   --modules <wasm-module-or-dir>
 #       a single Wasm module or a directory of them (non-recursive).
-#       Defaults to $MODULES_TO_BENCH_DIR (modules_to_bench/, created by
+#       Defaults to $WASMR3_MODULES_DIR (wasmr3_modules/, created by
 #       install_wasm-r3.sh).
 #   --output <dir>
-#       base directory for the results. Defaults to $OUTPUT_DIR (output/ in
-#       the root of wasmito-benchmark). Results go to the subdirectory
+#       base directory for the results. Defaults to $OUTPUT_DIR
+#       (output/execution_time/ in the root of wasmito-benchmark). Results go to the subdirectory
 #       <wei|wizeng>-<optimised|not-optimised>-<x86-64|jvm>: wei by default,
 #       wizeng with --no-analysis (e.g. wei-optimised-jvm).
 #   --runs <n>
@@ -92,7 +92,7 @@
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT_DIR/scripts/env.sh"
 
-MODULE_ARG=$MODULES_TO_BENCH_DIR
+MODULE_ARG=$WASMR3_MODULES_DIR
 OUTPUT_BASE=$OUTPUT_DIR
 NUM_RUNS=35
 TIMEOUT_SECS=600
@@ -181,7 +181,7 @@ CACHE_LIB="$WHAMM_DIR/tests/libs/cache/cache.wasm"
 LOOP_TRACER_LIB="$WHAMM_DIR/tests/libs/loop_tracer/tracer.wasm"
 
 if [ ! -e "$MODULE_ARG" ]; then
-    echo "error: '$MODULE_ARG' does not exist (for modules_to_bench/, run scripts/install_wasm-r3.sh first)" >&2
+    echo "error: '$MODULE_ARG' does not exist (for wasmr3_modules/, run scripts/install_wasm-r3.sh first)" >&2
     exit 1
 fi
 

@@ -1,14 +1,14 @@
 #!/bin/sh
 
-# Creates modules_to_bench/: the modules of wasm-benchmarks/wasm-r3-bench
-# listed in modules_to_bench.txt (one per line, # starts a comment)
+# Creates wasmr3_modules/: the modules of wasm-benchmarks/wasm-r3-bench
+# listed in wasmr3_modules_to_keep.txt (one per line, # starts a comment)
 
 set -e
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT_DIR/scripts/env.sh"
 SRC_DIR=$ROOT_DIR/wasm-benchmarks/wasm-r3-bench
-DEST_DIR=$MODULES_TO_BENCH_DIR
-MODULES_FILE=$ROOT_DIR/modules_to_bench.txt
+DEST_DIR=$WASMR3_MODULES_DIR
+MODULES_FILE=$ROOT_DIR/wasmr3_modules_to_keep.txt
 
 echo "> Copying modules listed in $MODULES_FILE to $DEST_DIR"
 rm -rf "$DEST_DIR"

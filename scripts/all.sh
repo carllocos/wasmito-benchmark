@@ -8,10 +8,11 @@
 #   2. wei_compile_all.sh: compiles the whamm monitors used by wei_run_all.sh
 #   3. wei_run_all.sh --target x86-64, once with --mode optimise and once
 #      with --mode no-optimise: the Wizard engine without monitors and with
-#      every whamm monitor (results in output/wei-optimised-x86-64 and
-#      output/wei-not-optimised-x86-64)
+#      every whamm monitor (results in
+#      output/execution_time/wei-optimised-x86-64 and
+#      output/execution_time/wei-not-optimised-x86-64)
 #   4. wasmito_run_all.sh: every Wasmito analysis (results in
-#      output/wasmito)
+#      output/execution_time/wasmito)
 #
 # If the installation or the monitor compilation fails, nothing is run.
 # A failing benchmark script does not stop the next one; the script exits

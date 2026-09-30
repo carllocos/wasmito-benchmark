@@ -18,11 +18,11 @@
 # Options (all optional, in any order; --flag value or --flag=value):
 #   --modules <wasm-module-or-dir>
 #       a single .wasm file or a directory of them (non-recursive).
-#       Defaults to $MODULES_TO_BENCH_DIR (modules_to_bench/, created by
+#       Defaults to $WASMR3_MODULES_DIR (wasmr3_modules/, created by
 #       install_wasm-r3.sh).
 #   --output <dir>
 #       where results are written. Defaults to $OUTPUT_DIR/wasmito
-#       (output/wasmito/ in the root of wasmito-benchmark).
+#       (output/execution_time/wasmito/ in the root of wasmito-benchmark).
 #   --analysis <name[,name...]|all>
 #       the analyses to run, comma-separated (e.g. 'call-graph,imix'), or
 #       'all'. Every name must be listed in wasmito_analyses.txt. Defaults
@@ -67,7 +67,7 @@ if [ "${#ANALYSES[@]}" -eq 0 ]; then
   exit 1
 fi
 
-WASM_PATH="$MODULES_TO_BENCH_DIR"
+WASM_PATH="$WASMR3_MODULES_DIR"
 RESULTS_DIR="$OUTPUT_DIR/wasmito"
 ANALYSIS_ARG="all"
 REPETITIONS=1
@@ -135,7 +135,7 @@ if [ ! -f "$CLI" ]; then
 fi
 
 if [ ! -e "$WASM_PATH" ]; then
-  echo "Error: wasm path '$WASM_PATH' does not exist (for modules_to_bench/, run scripts/install_wasm-r3.sh first)" >&2
+  echo "Error: wasm path '$WASM_PATH' does not exist (for wasmr3_modules/, run scripts/install_wasm-r3.sh first)" >&2
   exit 1
 fi
 
