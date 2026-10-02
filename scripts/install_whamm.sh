@@ -6,14 +6,14 @@
 # the PATH and sets WHAMM_HOME.
 #
 # Requires rustup: https://rustup.rs. The Rust toolchain is pinned to
-# RUST_VERSION (the dependencies locked in whamm v1.2.1 need rustc >= 1.94)
+# $WHAMM_RUST_VERSION from env.sh
 # without changing the machine's default toolchain.
 
 set -e
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT_DIR/scripts/env.sh"
 
-RUST_VERSION=1.94.0
+RUST_VERSION=$WHAMM_RUST_VERSION
 WASM_TARGET=wasm32-wasip1
 
 if ! command -v rustup >/dev/null 2>&1; then

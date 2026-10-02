@@ -5,43 +5,37 @@
 # Installs everything and runs all benchmarks:
 #   1. install_all.sh: installs Wasmito, Virgil, Wizard, Whamm and the
 #      benchmark modules
-#   2. wei_compile_all.sh: compiles the whamm monitors used by wei_run_all.sh
-#   3. wei_run_all.sh --target x86-64, once with --mode optimise and once
-#      with --mode no-optimise: the Wizard engine without monitors and with
-#      every whamm monitor (results in
-#      output/execution_time/wei-optimised-x86-64 and
-#      output/execution_time/wei-not-optimised-x86-64)
-#   4. wasmito_run_all.sh: every Wasmito analysis (results in
-#      output/execution_time/wasmito)
+#   2. measure_runtime_all.sh: the execution-time benchmarks of Wasmito
+#      (measure_runtime_wasmito.sh), then of the optimised and the non-optimised
+#      Wizard engine with the whamm monitors (build_monitors_wei.sh,
+#      measure_runtime_wei.sh), see measure_runtime_all.sh
+#   3. measure_sizes_all.sh: instruments the modules with whamm
+#      (measure_sizes_whamm.sh) and Wastrumentation
+#      (measure_sizes_wastrumentation.sh), see measure_sizes_all.sh
 #
-# If the installation or the monitor compilation fails, nothing is run.
-# A failing benchmark script does not stop the next one; the script exits
-# non-zero if any of them failed.
+# If the installation fails, nothing is run. A failing benchmark script does
+# not stop the next one; the script exits non-zero if any of them failed.
 
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 SCRIPTS_DIR=$ROOT_DIR/scripts
 
-set -e
 echo "> Running install_all.sh"
-"$SCRIPTS_DIR/install_all.sh"
-
-echo "> Running wei_compile_all.sh"
-"$SCRIPTS_DIR/wei_compile_all.sh"
-set +e
+if ! "$SCRIPTS_DIR/install_all.sh"; then
+    echo "error: install_all.sh failed" >&2
+    exit 1
+fi
 
 STATUS=0
 
-for MODE in optimise no-optimise; do
-    echo "> Running wei_run_all.sh --target x86-64 --mode $MODE"
-    if ! "$SCRIPTS_DIR/wei_run_all.sh" --target x86-64 --mode "$MODE"; then
-        echo "error: wei_run_all.sh --mode $MODE failed" >&2
-        STATUS=1
-    fi
-done
+echo "> Running measure_runtime_all.sh"
+if ! "$SCRIPTS_DIR/measure_runtime_all.sh"; then
+    echo "error: measure_runtime_all.sh failed" >&2
+    STATUS=1
+fi
 
-echo "> Running wasmito_run_all.sh"
-if ! "$SCRIPTS_DIR/wasmito_run_all.sh"; then
-    echo "error: wasmito_run_all.sh failed" >&2
+echo "> Running measure_sizes_all.sh"
+if ! "$SCRIPTS_DIR/measure_sizes_all.sh"; then
+    echo "error: measure_sizes_all.sh failed" >&2
     STATUS=1
 fi
 

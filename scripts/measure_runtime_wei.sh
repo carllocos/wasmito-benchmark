@@ -1,9 +1,11 @@
 #!/bin/sh
 #
-# Usage: wei_run_all.sh [--modules <wasm-module-or-dir>] [--output <dir>] [--runs <n>]
-#                       [--timeout <seconds>] [--target x86-64|jvm]
-#                       [--mode optimise|no-optimise]
-#                       [--monitors <dir>] [--no-analysis | --only-analysis]
+# Usage: measure_runtime_wei.sh [--modules <wasm-module-or-dir>]
+#                               [--output <dir>] [--runs <n>]
+#                               [--timeout <seconds>] [--target x86-64|jvm]
+#                               [--mode optimise|no-optimise]
+#                               [--monitors <dir>]
+#                               [--no-analysis | --only-analysis]
 #
 # Benchmarks the --modules with the Wizard engine (wizeng): first a baseline
 # run with no monitor attached at all (recorded as "none" in the analysis
@@ -11,8 +13,8 @@
 # With --no-analysis, only the baseline is run; with --only-analysis, only
 # the monitors are.
 #
-# monitors/cache_sim.wasm and monitors/loop_tracer.wasm depend on user
-# libraries (as wei_compile_all.sh compiled them with --user-libs), so the
+# wei-monitors/cache_sim.wasm and wei-monitors/loop_tracer.wasm depend on user
+# libraries (as build_monitors_wei.sh compiled them with --user-libs), so the
 # matching lib from whamm/tests/libs is appended to wizeng's --monitors
 # list after whamm_core.wasm.
 #
@@ -42,11 +44,11 @@
 # Options (all optional, in any order; --flag value or --flag=value):
 #   --modules <wasm-module-or-dir>
 #       a single Wasm module or a directory of them (non-recursive).
-#       Defaults to $WASMR3_MODULES_DIR (wasmr3_modules/, created by
-#       install_wasm-r3.sh).
+#       Defaults to $WASMR3_MODULES_DIR
+#       (bench_input_data/wasmr3_modules/, created by install_wasmr3.sh).
 #   --output <dir>
 #       base directory for the results. Defaults to $OUTPUT_DIR
-#       (output/execution_time/ in the root of wasmito-benchmark). Results go to the subdirectory
+#       (bench_output/execution_time/ in the root of wasmito-benchmark). Results go to the subdirectory
 #       <wei|wizeng>-<optimised|not-optimised>-<x86-64|jvm>: wei by default,
 #       wizeng with --no-analysis (e.g. wei-optimised-jvm).
 #   --runs <n>
@@ -61,7 +63,8 @@
 #       see above. Defaults to optimise.
 #   --monitors <dir>
 #       a directory of compiled wei monitors (*.wasm, non-recursive).
-#       Defaults to $MONITORS_DIR (monitors/, compiled by wei_compile_all.sh).
+#       Defaults to $MONITORS_DIR (wei-monitors/, compiled by
+#       build_monitors_wei.sh).
 #       Monitors named cache_sim.wasm or loop_tracer.wasm get their user lib
 #       attached, as described above.
 #   --no-analysis
@@ -175,13 +178,13 @@ fi
 
 CORE=$WHAMM_CORE
 
-# Libs required by specific monitors compiled by wei_compile_all.sh, keyed
+# Libs required by specific monitors compiled by build_monitors_wei.sh, keyed
 # by the monitor's basename (without .wasm).
 CACHE_LIB="$WHAMM_DIR/tests/libs/cache/cache.wasm"
 LOOP_TRACER_LIB="$WHAMM_DIR/tests/libs/loop_tracer/tracer.wasm"
 
 if [ ! -e "$MODULE_ARG" ]; then
-    echo "error: '$MODULE_ARG' does not exist (for wasmr3_modules/, run scripts/install_wasm-r3.sh first)" >&2
+    echo "error: '$MODULE_ARG' does not exist (for bench_input_data/wasmr3_modules/, run scripts/install_wasmr3.sh first)" >&2
     exit 1
 fi
 
@@ -269,7 +272,7 @@ if [ -z "$NO_ANALYSIS" ]; then
     fi
 
     if [ ! -d "$MONITORS_DIR" ]; then
-        echo "error: monitors directory '$MONITORS_DIR' does not exist (run wei_compile_all.sh first)" >&2
+        echo "error: monitors directory '$MONITORS_DIR' does not exist (run build_monitors_wei.sh first)" >&2
         exit 1
     fi
     FOUND_ANY_WHAMM=0
@@ -277,7 +280,7 @@ if [ -z "$NO_ANALYSIS" ]; then
         [ -f "$WHAMM_CHECK" ] && FOUND_ANY_WHAMM=1 && break
     done
     if [ "$FOUND_ANY_WHAMM" -eq 0 ]; then
-        echo "No *.wasm files found in monitors directory '$MONITORS_DIR' (run wei_compile_all.sh first)" >&2
+        echo "No *.wasm files found in monitors directory '$MONITORS_DIR' (run build_monitors_wei.sh first)" >&2
         exit 1
     fi
     if [ -f "$MONITORS_DIR/cache_sim.wasm" ] && [ ! -f "$CACHE_LIB" ]; then

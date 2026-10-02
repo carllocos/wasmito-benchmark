@@ -1,32 +1,36 @@
 #!/usr/bin/env bash
 #
-# Usage: wasmito_run_all.sh [--modules <wasm-module-or-dir>] [--output <dir>]
-#                           [--analysis <name[,name...]|all>] [--runs <n>]
-#                           [--timeout <seconds>]
+# Usage: measure_runtime_wasmito.sh --modules <wasm-module-or-dir>
+#                                   --output <dir>
+#                                   --analysis <name[,name...]|all|file>
+#                                   [--runs <n>] [--timeout <seconds>]
 #
 # Runs Wasmito analyses (through the Wasmito CLI, `cli.cjs analysis`) on
 # every Wasm module in --modules, --runs times per (analysis, module).
 #
-# The analyses are listed in wasmito_analyses.txt in the root of
-# wasmito-benchmark, one per line (blank lines are ignored and # starts a
-# comment). Add a line there to run a new analysis.
+# Any analysis the Wasmito CLI supports can be run (the choices listed by
+# `cli.cjs analysis --help`, except the CLI's own 'all'). Which ones run is
+# chosen with --analysis, e.g.
+#   --analysis bench_config/wasmito_runtime_overhead_analyses.txt
+# (as measure_runtime_all.sh does): a file with one analysis per line (blank
+# lines are ignored and # starts a comment).
 #
-# The Wasmito CLI and the modules come from env.sh, so the script can be
-# run from any directory. Relative paths given as options are resolved
-# against the current directory.
+# The Wasmito CLI comes from env.sh, so the script can be run from any
+# directory. Relative paths given as options are resolved against the
+# current directory.
 #
-# Options (all optional, in any order; --flag value or --flag=value):
-#   --modules <wasm-module-or-dir>
-#       a single .wasm file or a directory of them (non-recursive).
-#       Defaults to $WASMR3_MODULES_DIR (wasmr3_modules/, created by
-#       install_wasm-r3.sh).
-#   --output <dir>
-#       where results are written. Defaults to $OUTPUT_DIR/wasmito
-#       (output/execution_time/wasmito/ in the root of wasmito-benchmark).
-#   --analysis <name[,name...]|all>
-#       the analyses to run, comma-separated (e.g. 'call-graph,imix'), or
-#       'all'. Every name must be listed in wasmito_analyses.txt. Defaults
-#       to all: every analysis in wasmito_analyses.txt.
+# Options (in any order; --flag value or --flag=value):
+#   --modules <wasm-module-or-dir>   (required)
+#       a single .wasm file or a directory of them (non-recursive), e.g.
+#       bench_input_data/wasmr3_modules (created by install_wasmr3.sh).
+#   --output <dir>   (required)
+#       where results are written, e.g. bench_output/execution_time/wasmito.
+#   --analysis <name[,name...]|all|file>   (required)
+#       the analyses to run: comma-separated names (e.g. 'call-graph,imix'),
+#       'all' for every analysis the Wasmito CLI supports, or the path of a
+#       file listing the analyses to run (e.g.
+#       bench_config/wasmito_runtime_overhead_analyses.txt). Every name must
+#       be supported by the Wasmito CLI.
 #   --runs <n>
 #       how many times each analysis is run per module. Defaults to 1.
 #   --timeout <seconds>
@@ -50,32 +54,42 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 CLI="$WASMITO_DIR/dist/cjs/cli/cli.cjs"
 
-ANALYSES_FILE="$ROOT_DIR/wasmito_analyses.txt"
+# Prints the analyses the Wasmito CLI supports, one per line: the choices of
+# the <analysis> argument in `cli.cjs analysis --help`, without the CLI's own
+# 'all' (which runs everything in a single CLI invocation).
+supported_analyses() {
+  node "$CLI" analysis --help 2>/dev/null \
+    | tr '\n' ' ' \
+    | sed -n 's/.*(choices: \([^)]*\)).*/\1/p' \
+    | grep -o '"[^"]*"' \
+    | tr -d '"' \
+    | grep -v -x 'all'
+}
 
-if [ ! -f "$ANALYSES_FILE" ]; then
-  echo "Error: analyses file '$ANALYSES_FILE' does not exist" >&2
-  exit 1
-fi
-ANALYSES=()
-while IFS= read -r line || [ -n "$line" ]; do
-  line="${line%%#*}"
-  line="$(echo "$line" | xargs)"
-  [ -n "$line" ] && ANALYSES+=("$line")
-done < "$ANALYSES_FILE"
-if [ "${#ANALYSES[@]}" -eq 0 ]; then
-  echo "Error: no analyses listed in '$ANALYSES_FILE'" >&2
-  exit 1
-fi
+# Prints the analyses listed in the file $1, one per line.
+read_analyses_file() {
+  if [ ! -f "$1" ]; then
+    echo "Error: analyses file '$1' does not exist" >&2
+    exit 1
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    line="$(echo "$line" | xargs)"
+    if [ -n "$line" ]; then echo "$line"; fi
+  done < "$1"
+}
 
-WASM_PATH="$WASMR3_MODULES_DIR"
-RESULTS_DIR="$OUTPUT_DIR/wasmito"
-ANALYSIS_ARG="all"
+WASM_PATH=""
+RESULTS_DIR=""
+ANALYSIS_ARG=""
 REPETITIONS=1
 EXECUTION_TIMEOUT_SECONDS=600
 
 usage() {
-  echo "Usage: $(basename "$0") [--modules <wasm-module-or-dir>] [--output <dir>] [--analysis <name[,name...]|all>] [--runs <n>] [--timeout <seconds>]"
-  echo "  analyses: ${ANALYSES[*]}"
+  echo "Usage: $(basename "$0") --modules <wasm-module-or-dir> --output <dir> --analysis <name[,name...]|all|file> [--runs <n>] [--timeout <seconds>]"
+  if [ -f "$CLI" ]; then
+    echo "  supported analyses: $(supported_analyses | xargs)"
+  fi
 }
 
 fail_usage() {
@@ -118,6 +132,10 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+[ -n "$WASM_PATH" ] || fail_usage "--modules is required"
+[ -n "$RESULTS_DIR" ] || fail_usage "--output is required"
+[ -n "$ANALYSIS_ARG" ] || fail_usage "--analysis is required"
+
 # The CLI is run from the wasmito repo root (see below), so make the paths
 # given by the caller absolute first.
 absolute() {
@@ -135,7 +153,7 @@ if [ ! -f "$CLI" ]; then
 fi
 
 if [ ! -e "$WASM_PATH" ]; then
-  echo "Error: wasm path '$WASM_PATH' does not exist (for wasmr3_modules/, run scripts/install_wasm-r3.sh first)" >&2
+  echo "Error: wasm path '$WASM_PATH' does not exist (for bench_input_data/wasmr3_modules, run scripts/install_wasmr3.sh first)" >&2
   exit 1
 fi
 
@@ -147,30 +165,48 @@ if ! [[ "$EXECUTION_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$EXECUTION_TIMEOUT_SEC
   fail_usage "timeout '$EXECUTION_TIMEOUT_SECONDS' must be a positive integer (>= 1)"
 fi
 
-if [ "$ANALYSIS_ARG" != "all" ]; then
-  IFS=',' read -r -a REQUESTED_ANALYSES <<< "$ANALYSIS_ARG"
-  ANALYSES_TO_RUN=()
-  for requested in "${REQUESTED_ANALYSES[@]}"; do
-    # Allow whitespace around the commas, e.g. 'call-graph, imix'.
-    requested="$(echo "$requested" | xargs)"
-    [ -z "$requested" ] && continue
-    found=0
-    for a in "${ANALYSES[@]}"; do
-      if [ "$a" = "$requested" ]; then
-        found=1
-        break
-      fi
-    done
-    if [ "$found" -eq 0 ]; then
-      fail_usage "unknown analysis '$requested' (not listed in $ANALYSES_FILE)"
-    fi
-    ANALYSES_TO_RUN+=("$requested")
-  done
-  if [ "${#ANALYSES_TO_RUN[@]}" -eq 0 ]; then
-    fail_usage "no analysis given in '$ANALYSIS_ARG'"
-  fi
+SUPPORTED_ANALYSES=()
+while IFS= read -r a; do
+  SUPPORTED_ANALYSES+=("$a")
+done < <(supported_analyses)
+if [ "${#SUPPORTED_ANALYSES[@]}" -eq 0 ]; then
+  echo "Error: could not read the supported analyses from '$CLI analysis --help'" >&2
+  exit 1
+fi
+
+if [ "$ANALYSIS_ARG" = "all" ]; then
+  REQUESTED_ANALYSES=("${SUPPORTED_ANALYSES[@]}")
+  ANALYSES_SOURCE="the Wasmito CLI"
+elif [ -f "$ANALYSIS_ARG" ]; then
+  REQUESTED_ANALYSES=()
+  while IFS= read -r a; do
+    REQUESTED_ANALYSES+=("$a")
+  done < <(read_analyses_file "$ANALYSIS_ARG")
+  ANALYSES_SOURCE="$ANALYSIS_ARG"
 else
-  ANALYSES_TO_RUN=("${ANALYSES[@]}")
+  IFS=',' read -r -a REQUESTED_ANALYSES <<< "$ANALYSIS_ARG"
+  ANALYSES_SOURCE="--analysis"
+fi
+
+ANALYSES_TO_RUN=()
+for requested in "${REQUESTED_ANALYSES[@]+"${REQUESTED_ANALYSES[@]}"}"; do
+  # Allow whitespace around the commas, e.g. 'call-graph, imix'.
+  requested="$(echo "$requested" | xargs)"
+  [ -z "$requested" ] && continue
+  found=0
+  for a in "${SUPPORTED_ANALYSES[@]}"; do
+    if [ "$a" = "$requested" ]; then
+      found=1
+      break
+    fi
+  done
+  if [ "$found" -eq 0 ]; then
+    fail_usage "unknown analysis '$requested' in $ANALYSES_SOURCE (not supported by the Wasmito CLI)"
+  fi
+  ANALYSES_TO_RUN+=("$requested")
+done
+if [ "${#ANALYSES_TO_RUN[@]}" -eq 0 ]; then
+  fail_usage "no analysis given in '$ANALYSIS_ARG'"
 fi
 
 if [ -d "$WASM_PATH" ]; then

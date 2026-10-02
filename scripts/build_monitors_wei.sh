@@ -1,9 +1,12 @@
 #!/bin/sh
 #
-# Usage: wei_compile_all.sh
+# Usage: build_monitors_wei.sh
 #
-# Compiles the fixed set of whamm paper-eval analyses (see the list below)
-# to wei monitors, writing every compiled .wasm to $MONITORS_DIR.
+# Compiles every whamm script listed in bench_config/whamm_scripts.csv to a
+# wei monitor, writing it to $MONITORS_DIR/<name>.wasm, where <name> is the
+# script's name column. Add a row to bench_config/whamm_scripts.csv to compile
+# another script. cache_sim and loop_tracer are compiled with their user
+# library (see whamm_user_libs in env.sh).
 #
 # The whamm binary, the whamm repo and the output directory all come from
 # env.sh, so the script can be run from any directory.
@@ -13,9 +16,6 @@
 
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT_DIR/scripts/env.sh"
-
-SCRIPTS="$WHAMM_DIR/tests/scripts/paper_eval"
-LIBS="$WHAMM_DIR/tests/libs"
 
 compile() {
     # $1=whamm-script $2=output-file $3=libs (optional, <name>=<path>[,...])
@@ -37,23 +37,15 @@ STATUS=0
 FAILED=""
 
 run() {
-    if ! compile "$1" "$2" "$3"; then
+    # $1=whamm-script $2=name
+    if ! compile "$1" "$MONITORS_DIR/$2.wasm" "$(whamm_user_libs "$2")"; then
         STATUS=1
         FAILED="$FAILED$1
 "
     fi
 }
 
-run "$SCRIPTS/branches/branches-subset.mm" "$MONITORS_DIR/branches.wasm"
-run "$SCRIPTS/ins_count/ins_count-hw.mm" "$MONITORS_DIR/icount.wasm"
-run "$SCRIPTS/ins_coverage/coverage.mm" "$MONITORS_DIR/instr_coverage.wasm"
-run "$SCRIPTS/hotness/hotness-hw.mm" "$MONITORS_DIR/hotness.wasm"
-run "$SCRIPTS/cache_sim/cache_sim-hw.mm" "$MONITORS_DIR/cache_sim.wasm" "cache=$LIBS/cache/cache.wasm"
-run "$SCRIPTS/mem_access_tracing/mem_access.mm" "$MONITORS_DIR/mem_access.wasm"
-run "$SCRIPTS/loop_tracer/loop_tracer.mm" "$MONITORS_DIR/loop_tracer.wasm" "tracer=$LIBS/loop_tracer/tracer.wasm"
-run "$SCRIPTS/basic_block_profiling/basic-blocks.mm" "$MONITORS_DIR/basic_blocks.wasm"
-run "$SCRIPTS/call_graph/call_graph.mm" "$MONITORS_DIR/call_graph.wasm"
-run "$SCRIPTS/categories/category-hw.mm" "$MONITORS_DIR/imix.wasm"
+for_each_whamm_script run || exit 1
 
 if [ -n "$FAILED" ]; then
     echo "" >&2
