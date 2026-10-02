@@ -14,3 +14,7 @@
 [submodule "wizard"]
 	path = wizard
 	url = https://github.com/titzer/wizard-engine.git
+[submodule "wastrumentation"]
+	path = wastrumentation
+	url = https://github.com/aaronmunsters/wastrumentation.git
+	branch = include_byte_offset

@@ -142,5 +142,6 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
-modules_to_bench/
-monitors/
+bench_input_data/wasmr3_modules/
+bench_input_data/mcu_modules/*/wasm/
+wei-monitors/
