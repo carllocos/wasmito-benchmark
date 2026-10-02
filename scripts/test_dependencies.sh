@@ -8,8 +8,8 @@
 #
 # Errors (exit 1): a missing required command (git, make, cmake, gcc, g++,
 # pkg-config, curl, python3, python, node, npm, rustup, cargo, timeout,
-# realpath, bash and standard tools), a missing pySerial, and on Linux missing
-# OpenSSL or zlib headers.
+# realpath, bash and standard tools), python not being Python 3, a missing
+# pySerial, and on Linux missing OpenSSL or zlib headers.
 # Warnings: a Node.js version other than 25.1.0, missing headers that are only
 # needed to compile the native npm modules from source (libudev, Cairo,
 # Pango), and a platform other than Linux on x86-64.
@@ -79,6 +79,12 @@ done
 
 if command -v node >/dev/null 2>&1 && [ "$(node --version)" != "v$NODE_VERSION" ]; then
     warning "Node.js $(node --version) is installed, the benchmarks use v$NODE_VERSION"
+fi
+
+# arduino-cli calls python, which must be Python 3.
+if command -v python >/dev/null 2>&1 &&
+    ! python -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+    error "python is not Python 3 ($(python --version 2>&1)); python must run Python 3 (on Ubuntu: python-is-python3)"
 fi
 
 if command -v python3 >/dev/null 2>&1 && ! python3 -c "import serial" >/dev/null 2>&1; then

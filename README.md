@@ -45,6 +45,13 @@ on its own. On a fresh Debian or Ubuntu machine,
 | `bash` | `measure_runtime_wasmito.sh`, Wizard's build | |
 | A POSIX shell (`sh`) and standard tools (`sed`, `grep`, `xargs`, `tee`, `mktemp`) | all scripts | |
 
+**Python 3 must be on the `PATH` as `python`, not only as `python3`.**
+`arduino-cli`, which Wasmito's install uses, calls `python`, and it must be
+Python 3 (not Python 2). Check it with `python --version`. On Debian/Ubuntu,
+install `python-is-python3` (`install_dependencies.sh` does this); elsewhere,
+add a `python` symlink to `python3` on the `PATH`, e.g.
+`ln -s "$(command -v python3)" /usr/local/bin/python`.
+
 ### Optional
 
 | Tool | Needed for |
