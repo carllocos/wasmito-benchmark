@@ -1,0 +1,12 @@
+analysis,name,hooks
+wastrumentation/benchmarking-node/input-analyses/rust/block-profiling/Cargo.toml,basic_blocks,if-then-else if-then call-pre call-indirect-pre block-pre loop-pre
+wastrumentation/benchmarking-node/input-analyses/rust/call-graph/Cargo.toml,call_graph,call-pre
+wastrumentation/benchmarking-node/input-analyses/rust/coverage-instruction/Cargo.toml,instr_coverage,if-then-else if-then-else-post if-then if-then-post branch branch-if branch-table select call-pre call-post call-indirect-pre call-indirect-post unary binary drop return const local global load store memory-size memory-grow block-pre block-post loop-pre loop-post
+wastrumentation/benchmarking-node/input-analyses/rust/cryptominer-detection/Cargo.toml,crypto,binary
+wastrumentation/benchmarking-node/input-analyses/rust/denan/Cargo.toml,denan,generic-apply unary binary const local global load store
+wastrumentation/benchmarking-node/input-analyses/rust/opcodes/Cargo.toml,imix,if-then-else if-then-else-post if-then if-then-post branch branch-if branch-table select call-pre call-post call-indirect-pre call-indirect-post unary binary drop return const local global load store memory-size memory-grow block-pre block-post loop-pre loop-post
+wastrumentation/benchmarking-node/input-analyses/rust/memory-tracing/Cargo.toml,mem_access,load store
+wastrumentation/benchmarking-node/input-analyses/rust/safe-heap/Cargo.toml,safe_heap,load store
+wastrumentation-concurrency/data_race_violation/Cargo.toml,data_race_violation,store
+wastrumentation-concurrency/order_violation/Cargo.toml,order_violation,global load store
+wastrumentation-concurrency/variable_violation/Cargo.toml,variable_violation,global load store

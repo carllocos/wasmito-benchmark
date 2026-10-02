@@ -1,0 +1,11 @@
+whamm_script,name
+whamm/tests/scripts/paper_eval/branches/branches-subset.mm,branches
+whamm/tests/scripts/paper_eval/ins_count/ins_count-hw.mm,icount
+whamm/tests/scripts/paper_eval/ins_coverage/coverage.mm,instr_coverage
+whamm/tests/scripts/paper_eval/hotness/hotness-hw.mm,hotness
+whamm/tests/scripts/paper_eval/cache_sim/cache_sim-hw.mm,cache_sim
+whamm/tests/scripts/paper_eval/mem_access_tracing/mem_access.mm,mem_access
+whamm/tests/scripts/paper_eval/loop_tracer/loop_tracer.mm,loop_tracer
+whamm/tests/scripts/paper_eval/basic_block_profiling/basic-blocks.mm,basic_blocks
+whamm/tests/scripts/paper_eval/call_graph/call_graph.mm,call_graph
+whamm/tests/scripts/paper_eval/categories/category-hw.mm,imix
