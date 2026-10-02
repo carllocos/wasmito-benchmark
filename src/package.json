@@ -1,0 +1,19 @@
+{
+  "name": "wasmito-plot",
+  "version": "1.0.0",
+  "description": "The plot command of Wasmito, as a standalone JavaScript tool.",
+  "type": "module",
+  "bin": {
+    "wasmito-plot": "./cli.js"
+  },
+  "scripts": {
+    "plot": "node cli.js plot"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "canvas": "^3.2.3",
+    "commander": "^14.0.1"
+  }
+}
