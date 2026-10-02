@@ -3,6 +3,8 @@
 # Usage: all.sh
 #
 # Installs everything and runs all benchmarks:
+#   0. test_dependencies.sh: checks that the dependencies are installed (see
+#      install_dependencies.sh)
 #   1. install_all.sh: installs Wasmito, Virgil, Wizard, Whamm and the
 #      benchmark modules
 #   2. measure_runtime_all.sh: the execution-time benchmarks of Wasmito
@@ -13,11 +15,15 @@
 #      (measure_sizes_whamm.sh) and Wastrumentation
 #      (measure_sizes_wastrumentation.sh), see measure_sizes_all.sh
 #
-# If the installation fails, nothing is run. A failing benchmark script does
+# If a dependency is missing or the installation fails, nothing is run. A failing benchmark script does
 # not stop the next one; the script exits non-zero if any of them failed.
 
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 SCRIPTS_DIR=$ROOT_DIR/scripts
+
+if ! "$SCRIPTS_DIR/test_dependencies.sh"; then
+    exit 1
+fi
 
 echo "> Running install_all.sh"
 if ! "$SCRIPTS_DIR/install_all.sh"; then
