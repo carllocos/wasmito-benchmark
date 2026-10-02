@@ -7,9 +7,8 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "build": "npm run build:debug && npm run build:release",
-    "build:debug": "node_modules/assemblyscript/bin/asc.js src/single_variable.ts -o wasm/single_variable.wasm --sourceMap --debug",
-    "build:release": "node_modules/assemblyscript/bin/asc.js src/single_variable.ts -o wasm/single_variable.release.wasm"
+    "build": "npm run build:debug",
+    "build:debug": "node_modules/assemblyscript/bin/asc.js src/single_variable.ts -o wasm/single_variable.wasm --sourceMap --debug"
   },
   "dependencies": {
     "assemblyscript": "^0.27.25"
