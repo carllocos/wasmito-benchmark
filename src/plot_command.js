@@ -8,6 +8,7 @@ import {
   PLOT_FORMATS,
   PLOT_KINDS,
   WHAMM_BASELINE,
+  comparedAnalyses,
   computeModuleSlowdowns,
   computePhaseBreakdowns,
   computeSlowdownGroup,
@@ -59,7 +60,7 @@ export function registerPlotCommand(program) {
   program
     .command('plot')
     .description(
-      `Plot a benchmark CSV file, as produced by the 'analysis' command, into PDF, PNG and JPG files in <output-dir>. By default the distribution and statistics (mean, median, min, max, standard deviation) of every analysis per Wasm module are plotted, as <metric>. With --slowdown the slowdown of every analysis relative to the '${BASELINE_ANALYSIS}' baseline is plotted instead, as slowdown. With a second CSV, produced by Whamm, both tools are compared per Wasm module as bars: the runtimes without analysis ('${BASELINE_ANALYSIS}' and '${WHAMM_BASELINE}') in engine/engine_absolute and, relative to each other, in engine/engine_relative; every analysis with its measured times next to the runtimes in analysis/analysis_absolute and with its slowdowns in analysis/analysis_relative; and how the phases of <csv-path> (parsing_ms, spawn_ms, register_ms, deploy_ms, run_ms) add up to its total_ms in wasmito_phases/wasmito_phases, with the mean time of every phase in wasmito_phases/wasmito_phases.csv. All the numbers are written as Markdown tables (columns per Wasm module, one per tool, and a row per statistic) to tables.md. With --whamm-optimised, the runs of Whamm on Wizard with optimisations enabled are added to every comparison, as wizard opt and wei + wizard opt.`,
+      `Plot a benchmark CSV file, as produced by the 'analysis' command, into PDF, PNG and JPG files in <output-dir>. By default the distribution and statistics (mean, median, min, max, standard deviation) of every analysis per Wasm module are plotted, as <metric>. With --slowdown the slowdown of every analysis relative to the '${BASELINE_ANALYSIS}' baseline is plotted instead, as slowdown. With a second CSV, produced by Whamm, both tools are compared per Wasm module as bars: the runtimes without analysis ('${BASELINE_ANALYSIS}' and '${WHAMM_BASELINE}') in engine/engine_absolute and, relative to each other, in engine/engine_relative; every analysis with its measured times next to the runtimes in analysis/analysis_absolute and with its slowdowns in analysis/analysis_relative, and each analysis on its own in analysis/analysis_absolute/<analysis> and analysis/analysis_relative/<analysis>; and how the phases of <csv-path> (parsing_ms, spawn_ms, register_ms, deploy_ms, run_ms) add up to its total_ms in wasmito_phases/wasmito_phases, with the mean time of every phase in wasmito_phases/wasmito_phases.csv. All the numbers are written as Markdown tables (columns per Wasm module, one per tool, and a row per statistic) to tables.md. With --whamm-optimised, the runs of Whamm on Wizard with optimisations enabled are added to every comparison, as wizard opt and wei + wizard opt.`,
     )
     .usage('[options] <csv-path> [whamm-csv-path] <output-dir>')
     .argument(
@@ -256,6 +257,7 @@ export function registerPlotCommand(program) {
               'warduino',
             ),
             timeColumn: wasmitoColumn,
+            colorIndex: 0,
           };
           const tools = [wasmito];
           if (whammCsv !== undefined) {
@@ -268,6 +270,7 @@ export function registerPlotCommand(program) {
                 'wei',
               ),
               timeColumn: 'time_ms',
+              colorIndex: 1,
             });
           }
           if (whammOptCsv !== undefined) {
@@ -280,6 +283,7 @@ export function registerPlotCommand(program) {
                 'wei',
               ),
               timeColumn: 'time_ms',
+              colorIndex: 2,
             });
           }
           const analysisDir = subdirectory(outputDir, 'analysis');
@@ -358,6 +362,32 @@ export function registerPlotCommand(program) {
                 `Plotted the ${absolute ? 'time' : 'slowdown'} per Wasm module of ${tools.map((t) => t.label).join(', ')} to ${target.path}`,
               );
             }
+            // Every analysis on its own, without a title, in analysis/analysis_<kind>/.
+            const perAnalysisDir = subdirectory(analysisDir, `analysis_${kind}`);
+            for (const { second: analysis } of comparedAnalyses(tools, pairs)) {
+              for (const target of outputTargets(
+                perAnalysisDir,
+                analysis.replace(/[^\w.-]/g, '_'),
+              )) {
+                writeModuleComparisonPlot(
+                  tools,
+                  pairs,
+                  {
+                    format: target.format,
+                    title: false,
+                    width,
+                    absolute,
+                    timeoutMinutes,
+                    showMinMax: options.minMax,
+                    analysis,
+                  },
+                  target.path,
+                );
+                logger.info(
+                  `Plotted the ${absolute ? 'time' : 'slowdown'} per Wasm module of ${analysis} to ${target.path}`,
+                );
+              }
+            }
           }
           return;
         }
@@ -373,21 +403,30 @@ export function registerPlotCommand(program) {
         }
 
         const groups = [
-          computeSlowdownGroup('wasmito', parsed, BASELINE_ANALYSIS),
+          {
+            ...computeSlowdownGroup('wasmito', parsed, BASELINE_ANALYSIS),
+            colorIndex: 0,
+          },
         ];
         if (whammCsv !== undefined) {
-          groups.push(
-            computeSlowdownGroup('whamm', parseCsv(whammCsv), WHAMM_BASELINE),
-          );
+          groups.push({
+            ...computeSlowdownGroup(
+              'whamm',
+              parseCsv(whammCsv),
+              WHAMM_BASELINE,
+            ),
+            colorIndex: 1,
+          });
         }
         if (whammOptCsv !== undefined) {
-          groups.push(
-            computeSlowdownGroup(
+          groups.push({
+            ...computeSlowdownGroup(
               'whamm opt',
               parseCsv(whammOptCsv),
               WHAMM_BASELINE,
             ),
-          );
+            colorIndex: 2,
+          });
         }
 
         console.log(formatSlowdownTable(groups, pairs));

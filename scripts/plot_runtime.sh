@@ -9,7 +9,12 @@
 #   bench_output/execution_time/wei-optimised-x86-64/benchmark.csv (required)
 #   bench_output/execution_time/wei-not-optimised-x86-64/benchmark.csv
 #                                                                 (optional)
-# The plots are written to bench_output/plots/runtime.
+# The plots are written to bench_output/plots/runtime: the plots of every
+# analysis together in analysis/analysis_{absolute,relative}.{pdf,png,jpg}, and
+# one plot per analysis in analysis/analysis_{absolute,relative}/<analysis>.*.
+# When the non-optimised Wizard engine was measured, the same plots are also
+# written without it (Wasmito + WARDuino vs wei + wizard opt only) to
+# bench_output/plots/runtime_wizard_opt.
 #
 # Any arguments are passed on to the plot command, e.g.
 #   plot_runtime.sh --no-spawn --aggregate
@@ -22,6 +27,7 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 SRC_DIR=$ROOT_DIR/src
 RESULTS_DIR=$ROOT_DIR/bench_output/execution_time
 PLOT_DIR=$ROOT_DIR/bench_output/plots/runtime
+PLOT_OPT_DIR=$ROOT_DIR/bench_output/plots/runtime_wizard_opt
 
 WASMITO_CSV=$RESULTS_DIR/wasmito/benchmark.csv
 WHAMM_CSV=$RESULTS_DIR/wei-not-optimised-x86-64/benchmark.csv
@@ -52,6 +58,11 @@ if [ -f "$WHAMM_CSV" ]; then
     node "$SRC_DIR/cli.js" plot "$@" \
         --whamm-optimised "$WHAMM_OPT_CSV" \
         "$WASMITO_CSV" "$WHAMM_CSV" "$PLOT_DIR"
+    # The same plots with only Wasmito + WARDuino and wei + wizard opt.
+    mkdir -p "$PLOT_OPT_DIR"
+    node "$SRC_DIR/cli.js" plot "$@" \
+        --whamm-optimised "$WHAMM_OPT_CSV" \
+        "$WASMITO_CSV" "$PLOT_OPT_DIR"
 else
     node "$SRC_DIR/cli.js" plot "$@" \
         --whamm-optimised "$WHAMM_OPT_CSV" \

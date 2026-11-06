@@ -683,14 +683,42 @@ const COLORS = {
   muted: '#898781',
   grid: '#e1e0d9',
   axis: '#c3c2b7',
-  series: '#2a78d6',
+  // Colour-blind safe hues (Okabe & Ito) that also differ in lightness, so
+  // they stay apart in grayscale.
+  series: '#0072b2',
   /** The second categorical hue, validated as a pair with `series`. */
-  series2: '#eb6834',
+  series2: '#e69f00',
   /** The third categorical hue, validated with the first two. */
-  series3: '#1baf7a',
+  series3: '#009e73',
 };
 /** The colour of each tool when two or three are compared. */
 const TOOL_COLORS = [COLORS.series, COLORS.series2, COLORS.series3];
+/**
+ * The texture of the bars of each tool, so the tools stay apart without
+ * colour, e.g. printed in grayscale.
+ */
+const TOOL_TEXTURES = [undefined, 'forward', 'backward'];
+/**
+ * The colour of the tool (or slowdown group) at `side`: the one of its
+ * `colorIndex` when it has one, so a tool keeps its colour when a tool before
+ * it is left out, otherwise the one of its position.
+ */
+function toolColor(tool, side) {
+  return TOOL_COLORS[tool?.colorIndex ?? side];
+}
+
+/**
+ * The fill of the bars of the tool at `side`: its colour with its texture in
+ * a darker shade, or for its baseline a tint of its colour with the texture
+ * and an outline in the colour itself.
+ */
+function toolFill(tool, side, baseline = false) {
+  const color = toolColor(tool, side);
+  const texture = TOOL_TEXTURES[tool?.colorIndex ?? side];
+  return baseline
+    ? { color: tint(color), texture, ink: color, outline: true }
+    : { color, texture, ink: shade(color) };
+}
 const FONT = '"Helvetica Neue", Helvetica, Arial, sans-serif';
 const RASTER_SCALE = 2;
 
@@ -1200,7 +1228,7 @@ function renderSlowdownComparisonPlot(groups, pairs, opts) {
       rows.push({
         key,
         label: analysis,
-        color: TOOL_COLORS[side],
+        color: toolColor(groups[side], side),
         gapBefore: firstOfGroup && rows.length > 0 ? GROUP_GAP : 0,
       });
       firstOfGroup = false;
@@ -1240,7 +1268,7 @@ function renderSlowdownComparisonPlot(groups, pairs, opts) {
     accent: COLORS.inkSecondary,
     tools: groups.map((g, i) => ({
       label: `${g.label} (baseline: ${g.baseline})`,
-      color: TOOL_COLORS[i],
+      color: toolColor(g, i),
     })),
   };
   const headerH = headerHeight(noteLines, legend, opts.title);
@@ -1443,8 +1471,17 @@ const TOOL_GAP = 2;
  */
 const GROUP_FILL = { twoBars: 0.6, moreBars: 0.7 };
 const X_LABEL_ANGLE = Math.PI / 4;
-/** Room above a plot area for the values written over the tallest bars. */
-const VALUE_LABEL_H = 40;
+/**
+ * Room above a plot area at least, for its top tick label; more when the
+ * values written over the tallest bars reach higher.
+ */
+const VALUE_LABEL_H = 10;
+/** How much the top of a bar chart's axis goes up at a time, and how often. */
+const AXIS_RAISE = 1.15;
+const MAX_AXIS_RAISES = 40;
+/** Between the tick labels of a y-axis and its title, and the plot area. */
+const Y_TITLE_GAP = 8;
+const Y_TICK_GAP = 6;
 const VALUE_FONT_PX = 8.5;
 /** How far above the axis line the letter of a missing bar sits. */
 const MARKER_LIFT = 2.5;
@@ -1455,7 +1492,7 @@ const MARKER_LIFT = 2.5;
  * @typedef {Object} BarSeries
  * @property {number} side - The tool: its index, 0 for the first.
  * @property {boolean} baseline - Whether the bar is the tool's baseline rather than the analysis.
- * @property {string} color
+ * @property {BarFill} fill
  * @property {string} label
  */
 
@@ -1479,8 +1516,18 @@ export function analysisName(tool) {
 
 /** `hex` mixed with the surface, for a lighter bar of the same hue. */
 function tint(hex, amount = 0.45) {
+  return mix(hex, COLORS.surface, amount);
+}
+
+/** `hex` mixed with black, for the texture on a bar of the same hue. */
+function shade(hex, amount = 0.55) {
+  return mix(hex, '#000000', amount);
+}
+
+/** `amount` of `hex` mixed with `other`. */
+function mix(hex, other, amount) {
   const channels = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
-  const surface = channels(COLORS.surface);
+  const surface = channels(other);
   return (
     '#' +
     channels(hex)
@@ -1499,7 +1546,6 @@ const MISSING_MARKERS = {
   error: { symbol: 'E', label: 'failed with an error' },
   missing: { symbol: '–', label: 'no data' },
 };
-const NO_BASELINE_LABEL = 'no data or no successful baseline run';
 
 function missingMarker(cell) {
   if (cell?.runs === undefined && cell?.failure !== undefined) {
@@ -1521,10 +1567,12 @@ function missingMarker(cell) {
  *
  * @typedef {Object} BarChartSpec
  * @property {string} [title] - No title is drawn when undefined.
+ * @property {string} [heading] - A name drawn above the legend, e.g. of the one panel.
  * @property {BarSeries[]} series - The bars of every Wasm module, left to right.
  * @property {string[]} wasms
  * @property {{title: string; bar: (wasm: string, series: BarSeries) => BarValue;}[]} panels
- * @property {Axis} axis
+ * @property {(top: number) => Axis} axisUpTo - The axis up to at least `top`.
+ * @property {number} top - The highest value to show.
  * @property {(v: number) => string} formatTick
  * @property {(v: number) => string} formatValue - How the value written on a bar is formatted.
  * @property {'mean' | 'median'} average - What a bar's height and its written value are.
@@ -1566,9 +1614,12 @@ function scaleStats(s, factor) {
  * With `opts.absolute` the bars are the mean times instead, and every
  * tool gets a lighter bar for its baseline next to the bar of the analysis.
  */
-export function renderModuleComparisonPlot(tools, pairs, opts) {
+/**
+ * The analyses the first two tools have in common, each as the names the
+ * first (`first`) and the second (`second`) give it.
+ */
+export function comparedAnalyses(tools, pairs) {
   const [first, second] = tools;
-  const absolute = opts.absolute === true;
   const matched = matchAnalyses(
     moduleAnalyses(first),
     moduleAnalyses(second),
@@ -1578,6 +1629,22 @@ export function renderModuleComparisonPlot(tools, pairs, opts) {
     throw new Error(
       `${first.label} and ${second.label} have no analysis in common, pass --pair to match them`,
     );
+  }
+  return matched;
+}
+
+/**
+ * With `opts.analysis`, the name the second tool gives an analysis, only that
+ * analysis is plotted, in a panel of its own.
+ */
+export function renderModuleComparisonPlot(tools, pairs, opts) {
+  const absolute = opts.absolute === true;
+  let matched = comparedAnalyses(tools, pairs);
+  if (opts.analysis !== undefined) {
+    matched = matched.filter((g) => g.second === opts.analysis);
+    if (matched.length === 0) {
+      throw new Error(`'${opts.analysis}' is not an analysis in common`);
+    }
   }
   const wasms = comparedWasms(tools, (wasm) =>
     matched.some((g) =>
@@ -1594,20 +1661,20 @@ export function renderModuleComparisonPlot(tools, pairs, opts) {
         {
           side,
           baseline: true,
-          color: tint(TOOL_COLORS[side]),
+          fill: toolFill(tool, side, true),
           label: baselineName(tool),
         },
         {
           side,
           baseline: false,
-          color: TOOL_COLORS[side],
+          fill: toolFill(tool, side),
           label: analysisName(tool),
         },
       ])
     : tools.map((tool, side) => ({
         side,
         baseline: false,
-        color: TOOL_COLORS[side],
+        fill: toolFill(tool, side),
         label: `${analysisName(tool)} (baseline: ${baselineName(tool)})`,
       }));
   const barOf = (group) => (wasm, bar) => {
@@ -1621,8 +1688,9 @@ export function renderModuleComparisonPlot(tools, pairs, opts) {
     return { stats: absolute ? cell?.runs : cell?.slowdown, cell };
   };
   const panels = matched.map((group) => ({
-    // The analysis, by the name the second tool gives it.
-    title: group.second,
+    // The analysis, by the name the second tool gives it; above the legend
+    // when it is the only one.
+    title: opts.analysis !== undefined ? '' : group.second,
     bar: barOf(group),
   }));
   const all = panels.flatMap((p) =>
@@ -1633,18 +1701,23 @@ export function renderModuleComparisonPlot(tools, pairs, opts) {
   return renderBarChart({
     title: plotTitle(
       opts.title,
-      `${absolute ? 'Time' : 'Slowdown'} per Wasm module and analysis, ${tools.map((t) => t.label).join(' vs ')}`,
+      opts.analysis !== undefined
+        ? `${absolute ? 'Time' : 'Slowdown'} per Wasm module of ${opts.analysis}, ${tools.map((t) => t.label).join(' vs ')}`
+        : `${absolute ? 'Time' : 'Slowdown'} per Wasm module and analysis, ${tools.map((t) => t.label).join(' vs ')}`,
     ),
+    heading: opts.analysis,
     series,
     wasms,
     panels,
     // Slowdowns start at 1×, the baseline, so every bar grows up from it.
-    axis: absolute
-      ? logAxis(
-          Math.min(...all.map((s) => s.min).filter((v) => v > 0)),
-          Math.max(...all.map((s) => s.max)),
-        )
-      : logAxis(1, Math.max(1, ...all.map((s) => s.max)), 1),
+    axisUpTo: absolute
+      ? (top) =>
+          logAxis(
+            Math.min(...all.map((s) => s.min).filter((v) => v > 0)),
+            top,
+          )
+      : (top) => logAxis(1, top, 1),
+    top: Math.max(absolute ? 0 : 1, ...all.map((s) => s.max)),
     formatTick: absolute ? formatDuration : formatSlowdown,
     formatValue: absolute ? barSeconds : barSlowdown,
     // Times are the mean of the runs, slowdowns their median.
@@ -1653,7 +1726,7 @@ export function renderModuleComparisonPlot(tools, pairs, opts) {
       ? 'Time (log scale)'
       : 'Slowdown vs. baseline (×, log scale)',
     base: absolute ? undefined : 1,
-    missingLabel: absolute ? MISSING_MARKERS.missing.label : NO_BASELINE_LABEL,
+    missingLabel: MISSING_MARKERS.missing.label,
     columns: Math.min(COMPARISON_COLUMNS, panels.length),
     plotH: BAR_PLOT_H,
     opts,
@@ -1678,13 +1751,13 @@ export function renderBaselineComparisonPlot(tools, opts) {
     ? tools.map((tool, side) => ({
         side,
         baseline: true,
-        color: tint(TOOL_COLORS[side]),
+        fill: toolFill(tool, side, true),
         label: baselineName(tool),
       }))
     : others.map((tool, i) => ({
         side: i + 1,
         baseline: true,
-        color: tint(TOOL_COLORS[i + 1]),
+        fill: toolFill(tool, i + 1, true),
         label: `${baselineName(tool)} relative to ${baselineName(first)} (${timeColumnOf(tool)} / median ${timeColumnOf(first)})`,
       }));
   const bar = (wasm, s) => {
@@ -1715,10 +1788,11 @@ export function renderBaselineComparisonPlot(tools, opts) {
     series,
     wasms,
     panels: [{ title: '', bar }],
-    axis: absolute
-      ? logAxis(min, max)
+    axisUpTo: absolute
+      ? (top) => logAxis(min, top)
       : // Room below the lowest bar for the value written under it.
-        logAxis(Math.min(1, min) / 3, Math.max(1, max)),
+        (top) => logAxis(Math.min(1, min) / 3, top),
+    top: absolute ? max : Math.max(1, max),
     formatTick: absolute ? formatDuration : formatSlowdown,
     formatValue: absolute ? barSeconds : barSlowdown,
     // Times are the mean of the runs, slowdowns their median.
@@ -1741,9 +1815,9 @@ export function renderBaselineComparisonPlot(tools, opts) {
  * bar for every series from the base to the mean or median, with a whisker from the
  * min to the max, or a letter saying why there is no bar.
  */
-function renderBarChart(spec) {
-  const { series, wasms, panels, axis, formatTick, columns, plotH, opts } =
-    spec;
+function renderBarChart(spec, raises = 0) {
+  const { series, wasms, panels, formatTick, columns, plotH, opts } = spec;
+  const axis = spec.axisUpTo(spec.top * AXIS_RAISE ** raises);
   const showMinMax = opts.showMinMax !== false;
   const width = opts.width;
   const scratch = createCanvas(1, 1).getContext('2d');
@@ -1755,7 +1829,21 @@ function renderBarChart(spec) {
 
   const panelRows = Math.ceil(panels.length / columns);
   const panelW = (width - 2 * MARGIN - (columns - 1) * COLUMN_GAP) / columns;
-  const plotW = panelW - Y_AXIS_W;
+  // Room left of the plot area for the y-axis title and the widest tick label.
+  setFont(scratch, 10);
+  const yAxisW = Math.ceil(
+    14 +
+      Y_TITLE_GAP +
+      Math.max(
+        ...axis.ticks.map((t) => scratch.measureText(formatTick(t)).width),
+      ) +
+      Y_TICK_GAP,
+  );
+  const plotW = panelW - yAxisW;
+  // No room for the names of the panels when they have none.
+  const panelTitleH = panels.every((p) => p.title === '')
+    ? 0
+    : PANEL_TITLE_H + 4;
 
   // Bars of one tool are BAR_GAP apart, the tools TOOL_GAP.
   const gaps = series.map((bar, k) =>
@@ -1831,30 +1919,85 @@ function renderBarChart(spec) {
     return { bars, labels, py, baseY, plotBottom };
   };
 
-  // Room above and below the plot areas for the values that were moved.
-  let labelsAbove = VALUE_LABEL_H;
-  let labelsBelow = 0;
-  for (const panel of panels) {
+  // Room above and below the plot areas of each row of panels for the values
+  // that were moved.
+  const labelsAbove = Array(panelRows).fill(VALUE_LABEL_H);
+  const labelsBelow = Array(panelRows).fill(0);
+  panels.forEach((panel, idx) => {
+    const row = Math.floor(idx / columns);
     for (const l of layoutPanel(panel, 0, 0).labels) {
-      labelsAbove = Math.max(labelsAbove, Math.ceil(-l.top) + 4);
-      labelsBelow = Math.max(labelsBelow, Math.ceil(l.bottom - plotH));
+      labelsAbove[row] = Math.max(labelsAbove[row], Math.ceil(-l.top) + 4);
+      labelsBelow[row] = Math.max(
+        labelsBelow[row],
+        Math.ceil(l.bottom - plotH),
+      );
     }
+  });
+  const panelHeights = labelsAbove.map(
+    (above, row) => panelTitleH + above + plotH + labelsBelow[row] + xLabelH,
+  );
+  // The values over the tallest bars go in the plot area rather than in an
+  // empty band above it: the top of the axis goes up until they fit. Not with
+  // more rows, which share the axis: each row gets the room it needs instead.
+  if (
+    panelRows === 1 &&
+    labelsAbove.some((above) => above > VALUE_LABEL_H) &&
+    raises < MAX_AXIS_RAISES
+  ) {
+    return renderBarChart(spec, raises + 1);
   }
-  const panelH =
-    PANEL_TITLE_H + 8 + labelsAbove + plotH + labelsBelow + xLabelH;
+  // The top of each row of panels.
+  const rowTops = panelHeights.map((_, row) =>
+    panelHeights.slice(0, row).reduce((sum, h) => sum + h + PANEL_GAP, 0),
+  );
+  // Bars without data are only named in the legend when there are any.
+  const anyMissing = panels.some((panel) =>
+    wasms.some((wasm) =>
+      series.some((s) => {
+        const { stats, cell } = panel.bar(wasm, s);
+        return (
+          stats === undefined && missingMarker(cell) === MISSING_MARKERS.missing
+        );
+      }),
+    ),
+  );
   const legend = comparisonLegend(
     series,
-    spec.missingLabel,
+    anyMissing ? spec.missingLabel : undefined,
     opts.timeoutMinutes,
     showMinMax,
   );
-  const legendLines = layoutLegend(scratch, legend, width - 2 * MARGIN).length;
-  // The title, then the legend.
-  const headerH =
-    (spec.title === undefined ? 88 - 36 : 88) +
-    (legendLines - 1) * LEGEND_LINE_H;
+  // The title, then the heading, with the legend right of the last of them,
+  // or below them when it would need more lines there.
+  const titleY = MARGIN + 18;
+  const headingY = titleY + (spec.title === undefined ? -4 : 32);
+  const lastLine =
+    spec.heading !== undefined
+      ? { text: spec.heading, px: 13, y: headingY }
+      : spec.title !== undefined
+        ? { text: spec.title, px: 20, y: titleY }
+        : undefined;
+  let legendX = MARGIN;
+  let legendY = MARGIN + 4;
+  if (lastLine !== undefined) {
+    setFont(scratch, lastLine.px, 'bold');
+    legendX = MARGIN + Math.ceil(scratch.measureText(lastLine.text).width) + 32;
+    legendY = lastLine.y;
+    const lines = (x) =>
+      layoutLegend(scratch, legend, width - MARGIN - x).length;
+    if (lines(legendX) > lines(MARGIN)) {
+      legendX = MARGIN;
+      legendY = lastLine.y + 26;
+    }
+  }
+  const legendW = width - MARGIN - legendX;
+  const legendLines = layoutLegend(scratch, legend, legendW).length;
+  const headerH = legendY + 16 + (legendLines - 1) * LEGEND_LINE_H;
   const height =
-    headerH + panelRows * panelH + (panelRows - 1) * PANEL_GAP + MARGIN;
+    headerH +
+    panelHeights.reduce((sum, h) => sum + h, 0) +
+    (panelRows - 1) * PANEL_GAP +
+    MARGIN;
 
   const { canvas, ctx } = createPlotCanvas(opts.format, width, height);
 
@@ -1862,22 +2005,22 @@ function renderBarChart(spec) {
     ctx.textAlign = 'left';
     ctx.fillStyle = COLORS.ink;
     setFont(ctx, 20, 'bold');
-    ctx.fillText(spec.title, MARGIN, MARGIN + 18);
+    ctx.fillText(spec.title, MARGIN, titleY);
   }
-  drawComparisonLegend(
-    ctx,
-    legend,
-    MARGIN,
-    headerH - 16 - (legendLines - 1) * LEGEND_LINE_H,
-    width - 2 * MARGIN,
-  );
+  if (spec.heading !== undefined) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = COLORS.ink;
+    setFont(ctx, 13, 'bold');
+    ctx.fillText(spec.heading, MARGIN, headingY);
+  }
+  drawComparisonLegend(ctx, legend, legendX, legendY, legendW);
 
   panels.forEach((panel, idx) => {
     const col = idx % columns;
     const row = Math.floor(idx / columns);
-    const x0 = MARGIN + col * (panelW + COLUMN_GAP) + Y_AXIS_W;
-    const y0 = headerH + row * (panelH + PANEL_GAP);
-    const plotTop = y0 + PANEL_TITLE_H + 8 + labelsAbove;
+    const x0 = MARGIN + col * (panelW + COLUMN_GAP) + yAxisW;
+    const y0 = headerH + rowTops[row];
+    const plotTop = y0 + panelTitleH + labelsAbove[row];
     const { bars, labels, py, baseY, plotBottom } = layoutPanel(
       panel,
       x0,
@@ -1887,7 +2030,7 @@ function renderBarChart(spec) {
     ctx.textAlign = 'left';
     ctx.fillStyle = COLORS.ink;
     setFont(ctx, 13, 'bold');
-    ctx.fillText(panel.title, x0 - Y_AXIS_W, y0 + 14);
+    ctx.fillText(panel.title, x0 - yAxisW, y0 + 14);
 
     // Recessive grid with the tick labels.
     ctx.lineWidth = 1;
@@ -1901,9 +2044,9 @@ function renderBarChart(spec) {
       ctx.lineTo(x0 + plotW, y);
       ctx.stroke();
       ctx.fillStyle = COLORS.muted;
-      ctx.fillText(formatTick(t), x0 - 6, y + 3);
+      ctx.fillText(formatTick(t), x0 - Y_TICK_GAP, y + 3);
     }
-    drawYAxisTitle(ctx, spec.yTitle, x0 - Y_AXIS_W + 8, plotTop, plotBottom);
+    drawYAxisTitle(ctx, spec.yTitle, x0 - yAxisW + 8, plotTop, plotBottom);
 
     for (const { left, series: s, stats, cell, value } of bars) {
       const barCenter = left + barW / 2;
@@ -1919,7 +2062,7 @@ function renderBarChart(spec) {
         );
         continue;
       }
-      drawBar(ctx, left, barW, baseY, py(value), s.color);
+      drawBar(ctx, left, barW, baseY, py(value), s.fill);
       if (showMinMax && stats.max > stats.min) {
         ctx.strokeStyle = COLORS.ink;
         ctx.lineWidth = 1;
@@ -1940,7 +2083,7 @@ function renderBarChart(spec) {
     wasms.forEach((wasm, i) => {
       // The Wasm module, slanted so long names fit under narrow groups.
       ctx.save();
-      ctx.translate(x0 + (i + 0.5) * groupW, plotBottom + labelsBelow + 12);
+      ctx.translate(x0 + (i + 0.5) * groupW, plotBottom + labelsBelow[row] + 12);
       ctx.rotate(-X_LABEL_ANGLE);
       ctx.fillStyle = COLORS.inkSecondary;
       setFont(ctx, 11);
@@ -2064,10 +2207,76 @@ function drawBarValue(ctx, label) {
 }
 
 /**
- * A bar from `baseY` to `valueY`, with the corners at the data end rounded.
- * Bars below the baseline (a speed-up) grow downwards.
+ * How a bar is filled: its colour, and optionally a texture of lines or dots
+ * and an outline in `ink`, so that bars stay apart without colour.
+ *
+ * @typedef {Object} BarFill
+ * @property {string} color
+ * @property {'forward' | 'backward' | 'cross' | 'dots'} [texture]
+ * @property {string} [ink] - The colour of the texture and the outline.
+ * @property {boolean} [outline]
  */
-function drawBar(ctx, x, w, baseY, valueY, color) {
+
+/** The distance between the lines or dots of a texture. */
+const TEXTURE_STEP = 4;
+
+/**
+ * Fills the current path of `ctx`, which lies within `x`, `top`, `w`, `h`,
+ * with `fill`: a colour, or a `BarFill`.
+ */
+function fillShape(ctx, fill, x, top, w, h) {
+  const { color, texture, ink, outline } =
+    typeof fill === 'string' ? { color: fill } : fill;
+  ctx.fillStyle = color;
+  ctx.fill();
+  // The outline first: the texture replaces the path.
+  if (outline === true) {
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  if (texture !== undefined) {
+    ctx.save();
+    ctx.clip();
+    ctx.strokeStyle = ink;
+    ctx.fillStyle = ink;
+    ctx.lineWidth = 1;
+    const bottom = top + h;
+    ctx.beginPath();
+    if (texture === 'dots') {
+      for (let dy = TEXTURE_STEP / 2; dy < h; dy += TEXTURE_STEP) {
+        const odd = Math.round(dy / TEXTURE_STEP) % 2;
+        const from = odd * (TEXTURE_STEP / 2);
+        for (let dx = from; dx < w + 1; dx += TEXTURE_STEP) {
+          ctx.moveTo(x + dx + 0.8, bottom - dy);
+          ctx.arc(x + dx, bottom - dy, 0.8, 0, 2 * Math.PI);
+        }
+      }
+      ctx.fill();
+    } else {
+      // Lines at 45° and 135°, anchored to the bottom so that they continue
+      // from one bar to the next one.
+      for (let d = -h; d < w + h; d += TEXTURE_STEP) {
+        if (texture !== 'backward') {
+          ctx.moveTo(x + d, bottom);
+          ctx.lineTo(x + d + h, top);
+        }
+        if (texture !== 'forward') {
+          ctx.moveTo(x + d, bottom);
+          ctx.lineTo(x + d - h, top);
+        }
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+/**
+ * A bar from `baseY` to `valueY`, with the corners at the data end rounded,
+ * filled with `fill`. Bars below the baseline (a speed-up) grow downwards.
+ */
+function drawBar(ctx, x, w, baseY, valueY, fill) {
   const h = Math.abs(baseY - valueY);
   if (h < 0.5) return;
   const r = Math.min(4, w / 2, h);
@@ -2089,8 +2298,7 @@ function drawBar(ctx, x, w, baseY, valueY, color) {
     ctx.lineTo(x + w, baseY);
   }
   ctx.closePath();
-  ctx.fillStyle = color;
-  ctx.fill();
+  fillShape(ctx, fill, x, Math.min(baseY, valueY), w, h);
 }
 
 /** The distance between the lines of a legend that wraps. */
@@ -2105,7 +2313,10 @@ const LEGEND_LINE_H = 20;
  * @property {(ctx: CanvasRenderingContext2D, x: number, y: number) => void} drawSample
  */
 
-/** The tools by colour, the whisker, and the letters of the missing bars. */
+/**
+ * The tools by colour, the whisker, and the letters of the missing bars; the
+ * letter of bars without data only with a `missingLabel`.
+ */
 function comparisonLegend(
   series,
   missingLabel,
@@ -2115,7 +2326,7 @@ function comparisonLegend(
   const items = series.map((bar) => ({
     text: bar.label,
     sampleW: 10,
-    drawSample: (ctx, x, y) => drawBar(ctx, x, 10, y + 2, y - 11, bar.color),
+    drawSample: (ctx, x, y) => drawBar(ctx, x, 10, y + 2, y - 11, bar.fill),
   }));
 
   if (showMinMax) {
@@ -2138,6 +2349,7 @@ function comparisonLegend(
   }
 
   for (const [kind, marker] of Object.entries(MISSING_MARKERS)) {
+    if (kind === 'missing' && missingLabel === undefined) continue;
     items.push({
       text:
         kind === 'missing'
@@ -2215,16 +2427,22 @@ export const PHASES = [
  */
 
 /**
- * The first five categorical hues in their validated order, bottom to top of
- * a stack.
+ * Five colour-blind safe hues (Okabe & Ito) in a validated order, bottom to
+ * top of a stack, each with a texture of its own so the phases stay apart
+ * without colour.
  */
-const PHASE_COLORS = {
-  parsing_ms: '#2a78d6',
-  spawn_ms: '#eb6834',
-  register_ms: '#1baf7a',
-  deploy_ms: '#eda100',
-  run_ms: '#e87ba4',
-};
+const PHASE_FILLS = Object.fromEntries(
+  [
+    ['parsing_ms', '#0072b2', undefined],
+    ['spawn_ms', '#e69f00', 'forward'],
+    ['register_ms', '#009e73', 'backward'],
+    ['deploy_ms', '#d55e00', 'cross'],
+    ['run_ms', '#56b4e9', 'dots'],
+  ].map(([phase, color, texture]) => [
+    phase,
+    { color, texture, ink: shade(color) },
+  ]),
+);
 
 /** How the phases are named in the plot. */
 export const PHASE_LABELS = {
@@ -2503,7 +2721,7 @@ export function renderPhasePlot(breakdowns, opts) {
         const segments = stacked
           .map((p) => ({
             value: phaseTime(b, p, phases),
-            color: PHASE_COLORS[p],
+            fill: PHASE_FILLS[p],
           }))
           .filter((s) => s.value > 0);
         const top = segments.length - 1;
@@ -2520,10 +2738,12 @@ export function renderPhasePlot(breakdowns, opts) {
           // leaves of it, whatever the rounding.
           const to = k === top ? py(1 - spawnShare) : py(share);
           if (k === top) {
-            drawBar(ctx, left, barW, from, to, s.color);
+            drawBar(ctx, left, barW, from, to, s.fill);
           } else if (from - to > SEGMENT_GAP) {
-            ctx.fillStyle = s.color;
-            ctx.fillRect(left, to + SEGMENT_GAP, barW, from - to - SEGMENT_GAP);
+            const h = from - to - SEGMENT_GAP;
+            ctx.beginPath();
+            ctx.rect(left, to + SEGMENT_GAP, barW, h);
+            fillShape(ctx, s.fill, left, to + SEGMENT_GAP, barW, h);
           }
           // Its share, in a column next to the stack.
           const percent = (s.value / b.total) * 100;
@@ -2583,7 +2803,7 @@ const SPAWN_BAR_GAP = 3;
  * room above.
  */
 function drawSpawnBar(ctx, x, w, share, py) {
-  drawBar(ctx, x, w, py(0), py(share), PHASE_COLORS.spawn_ms);
+  drawBar(ctx, x, w, py(0), py(share), PHASE_FILLS.spawn_ms);
   const percent = share * 100;
   const label = percent < 0.5 ? '<1%' : `${Math.round(percent)}%`;
   setFont(ctx, VALUE_FONT_PX, 'bold');
@@ -2628,7 +2848,7 @@ function drawPhaseLegend(
   };
 
   for (const phase of phases) {
-    drawBar(ctx, cx, 10, y + 2, y - 11, PHASE_COLORS[phase]);
+    drawBar(ctx, cx, 10, y + 2, y - 11, PHASE_FILLS[phase]);
     item(
       isolateSpawn && phase === 'spawn_ms'
         ? `${PHASE_LABELS[phase]} (bar of its own, right of the stack)`
