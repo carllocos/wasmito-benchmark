@@ -32,7 +32,7 @@
 #       bench_config/wasmito_runtime_overhead_analyses.txt). Every name must
 #       be supported by the Wasmito CLI.
 #   --runs <n>
-#       how many times each analysis is run per module. Defaults to 1.
+#       how many times each analysis is run per module. Defaults to 35.
 #   --timeout <seconds>
 #       execution timeout per run, passed to the CLI as --te. Defaults to
 #       600 (10 minutes).
@@ -82,7 +82,7 @@ read_analyses_file() {
 WASM_PATH=""
 RESULTS_DIR=""
 ANALYSIS_ARG=""
-REPETITIONS=1
+REPETITIONS=35
 EXECUTION_TIMEOUT_SECONDS=600
 
 usage() {
