@@ -146,3 +146,4 @@ bench_input_data/wasmr3_modules/
 bench_input_data/mcu_modules/*/wasm/
 wei-monitors/
 bench_output/
+.vsocde/
