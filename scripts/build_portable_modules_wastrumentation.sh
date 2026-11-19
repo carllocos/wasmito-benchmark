@@ -20,7 +20,12 @@
 #       directory), and hooks is the space-separated list passed to --hooks.
 #       E.g. bench_config/wastrumentation_analyses.csv (used by
 #       measure_sizes_all.sh): the rules of the Makefile in Wastrumentation's
-#       local checkout and the ports of Wasmito's concurrency analyses in
+#       local checkout, the branches (branch coverage), forward and taint
+#       analyses of wastrumentation/benchmarking-node/input-analyses/rust/
+#       (branches hooks into if-then-else, if-then, branch-if and
+#       branch-table, forward into every instruction, taint additionally
+#       into generic-apply) and
+#       the ports of Wasmito's concurrency analyses in
 #       wastrumentation-concurrency/.
 #   --modules <wasm-module-or-dir>   (required)
 #       a single .wasm file or a directory of them (non-recursive), e.g.
