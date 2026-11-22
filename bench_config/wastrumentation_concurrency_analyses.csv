@@ -1,4 +1,0 @@
-analysis,name,hooks
-wastrumentation-concurrency/data_race_violation/Cargo.toml,data_race_violation,store
-wastrumentation-concurrency/order_violation/Cargo.toml,order_violation,global load store
-wastrumentation-concurrency/variable_violation/Cargo.toml,variable_violation,global load store

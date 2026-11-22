@@ -2,7 +2,7 @@
 // runtime_metrics_wasmito_phases.js
 //
 // Computes how the total runtime of Wasmito splits into its phases, which
-// plot_wei_opt.js draws as one stacked bar per Wasm module and analysis. The
+// plot_runtimes.js draws as one stacked bar per Wasm module and analysis. The
 // result is one CSV file; no plot is drawn here.
 //
 // Usage:
@@ -40,7 +40,7 @@
 // mean total time while their medians do not. The time columns are empty
 // for a failed analysis.
 //
-// The numbers are written with full precision, so that plot_wei_opt.js draws
+// The numbers are written with full precision, so that plot_runtimes.js draws
 // exactly what it would draw from the raw runs.
 
 import * as fs from 'fs';
@@ -67,7 +67,7 @@ function csvNumber(v) {
  * map of every analysis to a map of every Wasm module to either
  *   { runs, means: { <phase>: <mean ms> }, unattributed, total }
  * or, when every run failed, the string 'timeout' or 'error'.
- * The rows follow the order of the maps, so that plot_wei_opt.js rebuilds
+ * The rows follow the order of the maps, so that plot_runtimes.js rebuilds
  * them in the same order.
  */
 function formatCsv(breakdowns) {
@@ -113,7 +113,7 @@ const program = new Command();
 program
   .name('runtime_metrics_wasmito_phases')
   .description(
-    'Compute, per analysis and Wasm module, the mean time of every phase of Wasmito (parse, spawn, register, deploy, run), into one CSV file that plot_wei_opt.js plots.',
+    'Compute, per analysis and Wasm module, the mean time of every phase of Wasmito (parse, spawn, register, deploy, run), into one CSV file that plot_runtimes.js plots.',
   )
   .argument(
     '<wasmito-csv>',

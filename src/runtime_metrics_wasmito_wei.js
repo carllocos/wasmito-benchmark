@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // runtime_metrics_wasmito_wei.js
 //
-// Computes the runtime statistics that plot_wei_opt.js plots: for Wasmito
+// Computes the runtime statistics that plot_runtimes.js plots: for Wasmito
 // (on the WARDuino VM) and for Whamm on the optimised Wizard engine
 // ("wei + wizard opt"), per Wasm module and per analysis, the statistics of
 // the measured times and of the slowdowns. The result is one CSV file; no
@@ -48,7 +48,7 @@
 // every run failed, and the slowdowns also when the module has no successful
 // baseline run.
 //
-// The numbers are written with full precision, so that plot_wei_opt.js draws
+// The numbers are written with full precision, so that plot_runtimes.js draws
 // exactly what it would draw from the raw runs.
 
 import * as fs from 'fs';
@@ -156,7 +156,7 @@ const program = new Command();
 program
   .name('runtime_metrics_wasmito_wei')
   .description(
-    'Compute, per Wasm module and analysis, the statistics of the runtimes and slowdowns of Wasmito on WARDuino and of Whamm on the optimised Wizard engine (wei + wizard opt), into one CSV file that plot_wei_opt.js plots.',
+    'Compute, per Wasm module and analysis, the statistics of the runtimes and slowdowns of Wasmito on WARDuino and of Whamm on the optimised Wizard engine (wei + wizard opt), into one CSV file that plot_runtimes.js plots.',
   )
   .argument(
     '<wasmito-csv>',
