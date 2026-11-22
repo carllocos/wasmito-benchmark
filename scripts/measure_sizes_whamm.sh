@@ -10,7 +10,12 @@
 #      compared to the original, in
 #      bench_output/modules_overhead/module_sizes_whamm.csv
 #      (framework,analysis,module,module_size,instrumented_size,overhead).
-#      The CSV is recreated on every run.
+#      The CSV is recreated on every run. It also holds the sizes of the
+#      wei monitors of build_wei_modules_whamm.sh (every whamm script, also
+#      those of whamm-concurrency/, for the wasm-r3 and the MCU modules, in
+#      bench_output/modules_overhead/whamm-wei), with framework whamm-wei:
+#      instrumented_size is then the size of the monitor, which Wizard loads
+#      next to the unchanged module.
 #   3. src/aggregate_module_sizes.js: per analysis, the sums of the module
 #      sizes and instrumented sizes, aggregate (their ratio) and statistics
 #      of the per-module overhead (mean, geometric mean, median, min, max,
@@ -47,6 +52,25 @@ elif ! node "$ROOT_DIR/src/measure_module_sizes.js" \
     echo "error: measuring the module sizes of whamm failed" >&2
     STATUS=1
 fi
+
+echo "> Running build_wei_modules_whamm.sh"
+if ! "$SCRIPTS_DIR/build_wei_modules_whamm.sh" --output "$OVERHEAD_DIR/whamm-wei" >/dev/null; then
+    echo "error: build_wei_modules_whamm.sh failed" >&2
+    STATUS=1
+fi
+
+# The wei monitors (framework whamm-wei), compiled for the wasm-r3 and the MCU
+# modules: measure_module_sizes.js takes one directory of originals, so it
+# runs once per directory and skips (with a warning) the monitors of the
+# modules that are not in it.
+echo "> Measuring the sizes of the wei monitors of whamm"
+for DIR in "$MODULES" "$ROOT_DIR"/bench_input_data/mcu_modules/*/wasm; do
+    if ! node "$ROOT_DIR/src/measure_module_sizes.js" \
+        "$DIR" "$OVERHEAD_DIR/whamm-wei" "$SIZES_CSV" 2>/dev/null; then
+        echo "error: measuring the sizes of the wei monitors failed" >&2
+        STATUS=1
+    fi
+done
 
 echo "> Aggregating the module sizes of whamm"
 rm -f "$AGGREGATED_CSV"
