@@ -25,7 +25,6 @@ import {
   writePhasePlot,
   writeSlowdownPlot,
 } from './plot_util.js';
-import { formatMarkdownTables } from './markdown_tables.js';
 
 function createDirectoryIfUnexisting(directoryPath) {
   if (!fs.existsSync(directoryPath)) {
@@ -60,7 +59,7 @@ export function registerPlotCommand(program) {
   program
     .command('plot')
     .description(
-      `Plot a benchmark CSV file, as produced by the 'analysis' command, into PDF, PNG and JPG files in <output-dir>. By default the distribution and statistics (mean, median, min, max, standard deviation) of every analysis per Wasm module are plotted, as <metric>. With --slowdown the slowdown of every analysis relative to the '${BASELINE_ANALYSIS}' baseline is plotted instead, as slowdown. With a second CSV, produced by Whamm, both tools are compared per Wasm module as bars: the runtimes without analysis ('${BASELINE_ANALYSIS}' and '${WHAMM_BASELINE}') in engine/engine_absolute and, relative to each other, in engine/engine_relative; every analysis with its measured times next to the runtimes in analysis/analysis_absolute and with its slowdowns in analysis/analysis_relative, and each analysis on its own in analysis/analysis_absolute/<analysis> and analysis/analysis_relative/<analysis>; and how the phases of <csv-path> (parsing_ms, spawn_ms, register_ms, deploy_ms, run_ms) add up to its total_ms in wasmito_phases/wasmito_phases, with the mean time of every phase in wasmito_phases/wasmito_phases.csv. All the numbers are written as Markdown tables (columns per Wasm module, one per tool, and a row per statistic) to tables.md. With --whamm-optimised, the runs of Whamm on Wizard with optimisations enabled are added to every comparison, as wizard opt and wei + wizard opt.`,
+      `Plot a benchmark CSV file, as produced by the 'analysis' command, into PDF, PNG and JPG files in <output-dir>. By default the distribution and statistics (mean, median, min, max, standard deviation) of every analysis per Wasm module are plotted, as <metric>. With --slowdown the slowdown of every analysis relative to the '${BASELINE_ANALYSIS}' baseline is plotted instead, as slowdown. With a second CSV, produced by Whamm, both tools are compared per Wasm module as bars: the runtimes without analysis ('${BASELINE_ANALYSIS}' and '${WHAMM_BASELINE}') in engine/engine_absolute and, relative to each other, in engine/engine_relative; every analysis with its measured times next to the runtimes in analysis/analysis_absolute and with its slowdowns in analysis/analysis_relative, and each analysis on its own in analysis/analysis_absolute/<analysis> and analysis/analysis_relative/<analysis>; and how the phases of <csv-path> (parsing_ms, spawn_ms, register_ms, deploy_ms, run_ms) add up to its total_ms in wasmito_phases/wasmito_phases, with the mean time of every phase in wasmito_phases/wasmito_phases.csv. With --whamm-optimised, the runs of Whamm on Wizard with optimisations enabled are added to every comparison, as wizard opt and wei + wizard opt.`,
     )
     .usage('[options] <csv-path> [whamm-csv-path] <output-dir>')
     .argument(
@@ -296,13 +295,6 @@ export function registerPlotCommand(program) {
           fs.writeFileSync(phasesPath, formatPhaseBreakdownsCsv(phases));
           logger.info(`Wrote the phases of wasmito to ${phasesPath}`);
 
-          // The numbers behind the plots as Markdown tables.
-          const tablesPath = path.join(outputDir, 'tables.md');
-          fs.writeFileSync(
-            tablesPath,
-            formatMarkdownTables(tools, phases, pairs, timeoutMinutes),
-          );
-          logger.info(`Wrote the tables to ${tablesPath}`);
           for (const target of outputTargets(phasesDir, 'wasmito_phases')) {
             writePhasePlot(
               phases,

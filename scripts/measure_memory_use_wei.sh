@@ -1,12 +1,12 @@
 #!/bin/sh
 #
-# Usage: measure_memory_use_wei.sh [--skip-build] [--modules <dir|file>]
-#                                  [--output <csv>] [--runs <n>]
+# Usage: measure_memory_use_wei.sh [--skip-build] [--output <csv>] [--runs <n>]
 #                                  [--timeout <seconds>] [--target x86-64|jvm]
 #                                  [--analyses "<a> <b> ..."] [--no-baseline]
 #
 # Measures the memory (maximum resident set size, with /usr/bin/time) that
-# the Wizard engine uses to run every module, without monitors and with the
+# the Wizard engine uses to run every Wasm-R3 module
+# (bench_input_data/wasmr3_modules/), without monitors and with the
 # wei monitor of every Whamm analysis (src/measure_memory_use.js):
 #
 #   1. Builds the inputs (skipped with --skip-build):
@@ -16,15 +16,15 @@
 #        heap) size, into bench_output/whamm_user_libs/
 #        (build_whamm_user_libs_small.sh)
 #      - the wei monitors of every Whamm script of bench_config/whamm_scripts.csv
-#        and whamm-concurrency/, into bench_output/modules_overhead/whamm-wei/
-#        (build_wei_modules_whamm.sh)
-#   2. Runs src/measure_memory_use.js on every module of --modules, which
+#        and whamm-concurrency/ for the Wasm-R3 modules, into
+#        bench_output/modules_overhead/whamm-wei/
+#        (build_wei_modules_whamm.sh --wasmr3-only)
+#   2. Runs src/measure_memory_use.js on every Wasm-R3 module, which
 #      uses, per analysis, the smallest whamm_core.wasm that does not trap.
 #
 # Options (--flag value or --flag=value):
 #   --skip-build          skip step 1 (reuse the built cores, libraries and
 #                         monitors)
-#   --modules <dir|file>  Defaults to bench_input_data/wasmr3_modules/.
 #   --output <csv>        Defaults to
 #                         bench_output/memory_use/wizard_memory_use.csv.
 #   --runs <n>            runs per module and analysis (default 1)
@@ -34,6 +34,9 @@
 #   --analyses "<a> ..."  only these analyses (default: all of them)
 #   --no-baseline         skip the runs of Wizard without monitors
 #
+# The MCU modules of the concurrency bug evaluation are skipped: they import
+# WARDuino's primitives (module env), which Wizard does not provide.
+#
 # Needs a Linux machine with GNU time (/usr/bin/time) and GNU timeout, and
 # everything installed (install_all.sh). Exits non-zero if a step failed.
 
@@ -41,7 +44,7 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT_DIR/scripts/env.sh"
 
 usage() {
-    echo "Usage: $0 [--skip-build] [--modules <dir|file>] [--output <csv>] [--runs <n>] [--timeout <seconds>] [--target x86-64|jvm] [--analyses \"<a> ...\"] [--no-baseline]" >&2
+    echo "Usage: $0 [--skip-build] [--output <csv>] [--runs <n>] [--timeout <seconds>] [--target x86-64|jvm] [--analyses \"<a> ...\"] [--no-baseline]" >&2
     exit 1
 }
 
@@ -57,8 +60,6 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --skip-build) BUILD=0; shift ;;
         --no-baseline) NO_BASELINE=--no-baseline; shift ;;
-        --modules=*) MODULES=${1#*=}; shift ;;
-        --modules) [ $# -ge 2 ] || usage; MODULES=$2; shift 2 ;;
         --output=*) OUTPUT=${1#*=}; shift ;;
         --output) [ $# -ge 2 ] || usage; OUTPUT=$2; shift 2 ;;
         --runs=*) RUNS=${1#*=}; shift ;;
@@ -79,7 +80,7 @@ fail() {
 }
 
 [ -e "$MODULES" ] ||
-    fail "modules '$MODULES' do not exist (run scripts/install_wasmr3.sh first, or pass --modules)"
+    fail "modules '$MODULES' do not exist (run scripts/install_wasmr3.sh first)"
 if [ "$TARGET" = x86-64 ] && [ "$(uname -s)" != Linux ]; then
     fail "the x86-64 build of Wizard only runs on Linux (use --target jvm to test elsewhere)"
 fi
@@ -96,11 +97,11 @@ if [ "$BUILD" = 1 ]; then
         fail "building the user libraries failed"
 
     echo "> Compiling the wei monitors"
-    "$ROOT_DIR/scripts/build_wei_modules_whamm.sh" >/dev/null ||
+    "$ROOT_DIR/scripts/build_wei_modules_whamm.sh" --wasmr3-only >/dev/null ||
         fail "compiling the wei monitors failed"
 fi
 
-echo "> Measuring the memory use of Wizard on $MODULES"
+echo "> Measuring the memory use of Wizard on the Wasm-R3 modules in $MODULES"
 set -- --target "$TARGET" --modules "$MODULES" --output "$OUTPUT" \
     --runs "$RUNS" --timeout "$TIMEOUT"
 [ -n "$ANALYSES" ] && set -- "$@" --analyses "$ANALYSES"

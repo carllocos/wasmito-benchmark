@@ -1,6 +1,64 @@
+// plot_util.js
+//
+// The shared code behind every runtime plot of the benchmark: reading the
+// benchmark CSVs, the statistics, matching the analyses of two frameworks,
+// and drawing the plots on a canvas (the `canvas` package), which is then
+// encoded as PDF, PNG or JPG.
+//
+// Who uses what:
+//   - plot_command.js (the `plot` command of cli.js) uses almost everything.
+//   - runtime_metrics_wasmito_wei.js and runtime_metrics_wasmito_phases.js
+//     use the parsing and statistics: parseBenchmarkCsv,
+//     computeModuleSlowdowns and computePhaseBreakdowns.
+//   - plot_wei_opt.js and plot_wasmito_phases.js use the drawing:
+//     writeModuleComparisonPlot, writeBaselineComparisonPlot and
+//     writePhasePlot.
+//
+// The file is organised in sections (search for the lines of dashes):
+//   CSV parsing and statistics         read the runs, compute Stats
+//   Axis scales                        linear and logarithmic axes
+//   Density estimation (violins)       for the violin plots of `plot`
+//   Slowdown relative to a baseline    slowdowns over all modules together
+//                                      (`plot --slowdown` / `--aggregate`)
+//   Matching the analyses of two tools which analysis of one framework is
+//                                      compared with which of the other
+//   Rendering                          colours, sizes, the violin/range
+//                                      plots of `plot`
+//   Slowdown per Wasm module, compared between two tools
+//                                      the bar charts of plot_wei_opt.js
+//   The phases that make up the total time of wasmito
+//                                      the stacked bars of
+//                                      plot_wasmito_phases.js
+//   (after it)                         the drawing helpers of the violin and
+//                                      range plots
+//
+// The main data structures, from the raw runs to the plots:
+//   ParsedBenchmarkCsv  parseBenchmarkCsv: the runs of one CSV, as
+//                       Wasm module -> analysis -> [value of every run], plus
+//                       the failed runs and why they failed
+//   Stats               computeStats: count, mean, median, min, max, stdev,
+//                       q1, q3 of a list of values
+//   ModuleTool          computeModuleSlowdowns: one framework ("tool"), with
+//                       per Wasm module and analysis a ModuleCell of the Stats
+//                       of its times and of its slowdowns
+//   PhaseBreakdowns     computePhaseBreakdowns: per analysis and Wasm module
+//                       the mean time of every phase of Wasmito
+//
+// How a plot is drawn: a render* function computes the layout (sizes of the
+// panels, the axis, where every bar and label goes), creates a canvas of the
+// right size (createPlotCanvas), draws on it with the 2D canvas API (ctx),
+// and encodes it (encodePlot). The matching write* function writes the
+// result to a file. Positions are in logical pixels; PNG and JPG are drawn
+// at RASTER_SCALE times that size so they stay sharp.
+
 import * as fs from 'fs';
 import { createCanvas } from 'canvas';
 
+/**
+ * The time columns of Wasmito's benchmark CSV, one per phase of a run plus
+ * their total, all in ms. Any of them can be plotted by the `plot` command
+ * (--metric).
+ */
 export const METRICS = [
   'parsing_ms',
   'spawn_ms',
@@ -13,13 +71,19 @@ export const METRICS = [
  * @typedef {(typeof METRICS)[number]} Metric
  */
 
+/** The file formats a plot can be written in. */
 export const PLOT_FORMATS = ['pdf', 'png', 'jpg'];
 /**
  * @typedef {(typeof PLOT_FORMATS)[number]} PlotFormat
  */
 
+/**
+ * The name of Wasmito's run without any analysis in its benchmark CSV: the
+ * baseline that the slowdowns of the analyses are relative to.
+ */
 export const BASELINE_ANALYSIS = 'no-analysis';
 
+/** The axis title of every metric of METRICS. */
 const METRIC_LABELS = {
   parsing_ms: 'Parsing time (ms)',
   spawn_ms: 'VM spawn time (ms)',
@@ -29,6 +93,7 @@ const METRIC_LABELS = {
   total_ms: 'Total time (ms)',
 };
 
+/** Whether `name` is one of METRICS. */
 export function isMetric(name) {
   return METRICS.includes(name);
 }
@@ -80,8 +145,13 @@ const WASM_COLUMNS = ['wasm', 'wasm_module'];
 const METRIC_COLUMN_ALIASES = {
   total_ms: ['total_ms', 'time_ms'],
 };
+/**
+ * The columns that hold a time. A row in which any of these is not a number
+ * is a failed run (see parseBenchmarkCsv).
+ */
 const NUMERIC_COLUMNS = [...METRICS, 'time_ms'];
 
+/** The index of the first of `names` in `header`, or -1 if none is in it. */
 function findColumn(header, names) {
   for (const name of names) {
     const idx = header.indexOf(name);
@@ -119,6 +189,8 @@ export function parseBenchmarkCsv(content, metric, onSkip = () => undefined) {
     throw new Error(`CSV is missing required column(s): ${missing.join(', ')}`);
   }
 
+  // The time columns this CSV has: a run failed when any of them is not a
+  // number.
   const knownMetricIdxs = NUMERIC_COLUMNS.map((m) => header.indexOf(m)).filter(
     (i) => i >= 0,
   );
@@ -139,6 +211,8 @@ export function parseBenchmarkCsv(content, metric, onSkip = () => undefined) {
         !Number.isFinite(Number(fields[idx])),
     );
     if (failed !== undefined) {
+      // A failed run: count it per Wasm module and analysis, and remember
+      // why it failed ('timeout' wins over 'error' when both happened).
       skippedRows++;
       const failedWasm = fields[wasmIdx];
       const perWasmFailures = failures.get(failedWasm) ?? new Map();
@@ -163,6 +237,8 @@ export function parseBenchmarkCsv(content, metric, onSkip = () => undefined) {
       continue;
     }
 
+    // A successful run: add its value to the list of its Wasm module and
+    // analysis.
     const wasm = fields[wasmIdx];
     const analysis = fields[analysisIdx];
     const perWasm = samples.get(wasm) ?? new Map();
@@ -231,6 +307,10 @@ function quantile(sorted, p) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
+/**
+ * The statistics of `values` (at least one): count, mean, median, min, max,
+ * sample standard deviation and the first and third quartile. See Stats.
+ */
 export function computeStats(values) {
   if (values.length === 0) {
     throw new Error('Cannot compute statistics of an empty list');
@@ -661,6 +741,10 @@ export function formatSlowdownTable(groups, pairs = DEFAULT_ANALYSIS_PAIRS) {
 // Rendering
 // ---------------------------------------------------------------------------
 
+/**
+ * How the runs of a row are drawn in the plots of the `plot` command:
+ * `violin` shows their distribution, `range` only min to max.
+ */
 export const PLOT_KINDS = ['violin', 'range'];
 /**
  * @typedef {(typeof PLOT_KINDS)[number]} PlotKind
@@ -676,6 +760,7 @@ export const PLOT_KINDS = ['violin', 'range'];
  * @property {number} width - Logical width; the height follows from the number of panels.
  */
 
+/** The colours of all plots: the background, text, grid, and the series. */
 const COLORS = {
   surface: '#fcfcfb',
   ink: '#0b0b0b',
@@ -719,14 +804,22 @@ function toolFill(tool, side, baseline = false) {
     ? { color: tint(color), texture, ink: color, outline: true }
     : { color, texture, ink: shade(color) };
 }
+// Sizes of the plots, in logical pixels.
 const FONT = '"Helvetica Neue", Helvetica, Arial, sans-serif';
+/** PNG and JPG are drawn this many times larger than the logical size. */
 const RASTER_SCALE = 2;
 
+/** Empty space around a whole plot. */
 const MARGIN = 32;
+/** The most panels next to each other in a plot of the `plot` command. */
 const MAX_COLUMNS = 3;
+/** Horizontal space between two panels next to each other. */
 const COLUMN_GAP = 28;
+/** Vertical space between two rows of panels. */
 const PANEL_GAP = 22;
+/** Height of the title line of a panel. */
 const PANEL_TITLE_H = 24;
+/** Height of one row (Wasm module) in a violin or range plot. */
 const ROW_H = { violin: 30, range: 22 };
 /** Space between the rows of two compared analyses and the next ones. */
 const GROUP_GAP = 14;
@@ -734,23 +827,31 @@ const GROUP_GAP = 14;
 const AXIS_H = 42;
 /** Room right of a panel's plot area for the label of the peak mean. */
 const LABEL_PAD = 92;
+/** Space between the longest row label and the plot area. */
 const LABEL_GUTTER_PAD = 14;
 /** Width taken by the coloured dot before a row label. */
 const SWATCH_W = 16;
+/** Height of one line of the notes under the subtitle. */
 const NOTE_LINE_H = 18;
 /** Extra header height for the line naming the compared tools. */
 const TOOLS_LEGEND_H = 22;
 /** Violins drawn from fewer runs than this are flagged as indicative. */
 const FEW_RUNS = 5;
 
+/** A number rounded to an integer with thousands separators: `12,345`. */
 function formatNumber(v) {
   return Math.round(v).toLocaleString('en-US');
 }
 
+/** Sets the font of `ctx` to FONT at `px` pixels, e.g. weight 'bold'. */
 function setFont(ctx, px, weight = '') {
   ctx.font = `${weight} ${px}px ${FONT}`.trim();
 }
 
+/**
+ * Adds a rectangle with corners rounded by `r` to the current path of `ctx`
+ * (fill or stroke it afterwards).
+ */
 function roundedRect(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
@@ -792,6 +893,7 @@ export function wasmDisplayName(wasm) {
  * @property {number} gapBefore - Empty space above the row, to set a group of rows apart.
  */
 
+/** Rows without grouping, one per name, all in the first series colour. */
 function plainRows(names) {
   return names.map((name) => ({
     key: name,
@@ -812,6 +914,7 @@ function rowOffsets(rows, rowH) {
   });
 }
 
+/** The height of a panel's plot area: its rows and the gaps between them. */
 function plotAreaHeight(rows, rowH) {
   return rows.reduce((sum, row) => sum + row.gapBefore + rowH, 0);
 }
@@ -841,6 +944,11 @@ function plotAreaHeight(rows, rowH) {
  * @property {number} [referenceValue] - A value marked with a vertical line, e.g. 1 for "no slowdown".
  */
 
+/**
+ * A Panel from the values of its rows: computes the Stats of every row and
+ * keeps as failed only the rows without any value. `detail` turns the Stats
+ * into the muted text after the title.
+ */
 function makePanel(title, detail, rows, values, failed, swatches = false) {
   const stats = new Map([...values].map(([r, v]) => [r, computeStats(v)]));
   const failedRows = new Set(failed);
@@ -865,6 +973,10 @@ function countRange(stats) {
   return lo === hi ? `${lo}` : `${lo}-${hi}`;
 }
 
+/**
+ * An axis that fits every row of `stats`: up to the highest max (or mean +
+ * stdev) and, on a log scale, down to the lowest positive min.
+ */
 function axisFor(stats, logScale) {
   const top = Math.max(...stats.map((s) => Math.max(s.max, s.mean + s.stdev)));
   if (!logScale) return linearAxis(top);
@@ -874,6 +986,11 @@ function axisFor(stats, logScale) {
   return logAxis(Math.min(...positives), top);
 }
 
+/**
+ * A new canvas of `width` x `height` logical pixels with the background
+ * painted: a vector PDF canvas, or a bitmap RASTER_SCALE times larger for PNG
+ * and JPG. Returns the canvas and its 2D drawing context.
+ */
 function createPlotCanvas(format, width, height) {
   const scale = format === 'pdf' ? 1 : RASTER_SCALE;
   const canvas =
@@ -888,6 +1005,7 @@ function createPlotCanvas(format, width, height) {
   return { canvas, ctx };
 }
 
+/** The drawn `canvas` as the bytes of a `format` file. */
 function encodePlot(canvas, format) {
   switch (format) {
     case 'pdf':
@@ -944,6 +1062,10 @@ function drawHeader(ctx, header) {
   );
 }
 
+/**
+ * The height of the header of a violin or range plot: title, subtitle,
+ * notes and legend (less without a title).
+ */
 function headerHeight(noteLines, legend, title) {
   return (
     104 +
@@ -1401,6 +1523,7 @@ export function moduleAnalyses(tool) {
   return [...names].sort();
 }
 
+/** A number with 6 significant digits for a CSV, or '' when undefined. */
 function csvNumber(v) {
   return v === undefined ? '' : `${Number(v.toPrecision(6))}`;
 }
@@ -1444,7 +1567,9 @@ export function formatDuration(ms) {
     : `${Number(ms.toPrecision(3))} ms`;
 }
 
+/** Panels next to each other in the bar charts and the phases plot. */
 const COMPARISON_COLUMNS = 2;
+/** Height of the plot area of one panel of a bar chart. */
 const BAR_PLOT_H = 190;
 /** Room left of a panel's plot area for the tick labels of the y-axis. */
 const Y_AXIS_W = 74;
@@ -1460,6 +1585,7 @@ function drawYAxisTitle(ctx, text, x, top, bottom) {
   ctx.fillText(text, 0, 0);
   ctx.restore();
 }
+/** The widest a bar may be; narrower when many Wasm modules share a panel. */
 const MAX_BAR_W = 18;
 /** Surface gap between the bars of one tool on a Wasm module. */
 const BAR_GAP = 1;
@@ -1470,6 +1596,7 @@ const TOOL_GAP = 2;
  * separates it from the next module.
  */
 const GROUP_FILL = { twoBars: 0.6, moreBars: 0.7 };
+/** The slant of the Wasm module names under a panel (45 degrees). */
 const X_LABEL_ANGLE = Math.PI / 4;
 /**
  * Room above a plot area at least, for its top tick label; more when the
@@ -1478,10 +1605,12 @@ const X_LABEL_ANGLE = Math.PI / 4;
 const VALUE_LABEL_H = 10;
 /** How much the top of a bar chart's axis goes up at a time, and how often. */
 const AXIS_RAISE = 1.15;
+/** The most times the top of the axis is raised (see renderBarChart). */
 const MAX_AXIS_RAISES = 40;
 /** Between the tick labels of a y-axis and its title, and the plot area. */
 const Y_TITLE_GAP = 8;
 const Y_TICK_GAP = 6;
+/** Font size of the values written on the bars. */
 const VALUE_FONT_PX = 8.5;
 /** How far above the axis line the letter of a missing bar sits. */
 const MARKER_LIFT = 2.5;
@@ -1547,6 +1676,10 @@ const MISSING_MARKERS = {
   missing: { symbol: '–', label: 'no data' },
 };
 
+/**
+ * The marker drawn instead of a bar for `cell`: T when its runs timed out,
+ * E when they failed with an error, and – when there is no data at all.
+ */
 function missingMarker(cell) {
   if (cell?.runs === undefined && cell?.failure !== undefined) {
     return MISSING_MARKERS[cell.failure];
@@ -1606,15 +1739,6 @@ function scaleStats(s, factor) {
 }
 
 /**
- * One small-multiple panel per analysis that the first two tools have (see
- * `matchAnalyses`), all sharing one log y-axis; the tools after the second
- * share the analysis names of the second. Every Wasm module gets a bar per
- * tool from 1× to the median slowdown of its runs, with a whisker from the
- * min to the max. A letter replaces the bar of runs that timed out or failed.
- * With `opts.absolute` the bars are the mean times instead, and every
- * tool gets a lighter bar for its baseline next to the bar of the analysis.
- */
-/**
  * The analyses the first two tools have in common, each as the names the
  * first (`first`) and the second (`second`) give it.
  */
@@ -1634,11 +1758,23 @@ export function comparedAnalyses(tools, pairs) {
 }
 
 /**
- * With `opts.analysis`, the name the second tool gives an analysis, only that
- * analysis is plotted, in a panel of its own.
+ * What the absolute and the relative per-module comparison share: the
+ * analyses to draw, one panel each, and the Wasm modules to draw them for.
+ * The analyses are those the first two tools have in common (see
+ * `matchAnalyses`), as { first, second }: the names the two tools give
+ * them; the tools after the second share the analysis names of the second.
+ * With `opts.analysis`, the name the second tool gives an analysis, only
+ * that analysis is kept.
+ *
+ * Every panel gets a `bar(wasm, series)` function that returns what a bar
+ * shows: `statsOf(cell)` of the cell of the bar's tool on `wasm`, for the
+ * analysis of the panel or, for a baseline bar, for the tool's run without
+ * analysis, and the cell itself, which says why there is no bar when the
+ * Stats are missing. Also returns `all`, the Stats of every bar of every
+ * panel, to size the shared axis.
  */
-export function renderModuleComparisonPlot(tools, pairs, opts) {
-  const absolute = opts.absolute === true;
+function moduleComparisonPanels(tools, pairs, opts, series, statsOf) {
+  // The analyses to draw, one panel each.
   let matched = comparedAnalyses(tools, pairs);
   if (opts.analysis !== undefined) {
     matched = matched.filter((g) => g.second === opts.analysis);
@@ -1646,6 +1782,7 @@ export function renderModuleComparisonPlot(tools, pairs, opts) {
       throw new Error(`'${opts.analysis}' is not an analysis in common`);
     }
   }
+  // The Wasm modules that at least one tool has data for in a drawn analysis.
   const wasms = comparedWasms(tools, (wasm) =>
     matched.some((g) =>
       tools.some((tool, side) =>
@@ -1654,29 +1791,6 @@ export function renderModuleComparisonPlot(tools, pairs, opts) {
     ),
   );
 
-  // The bars of a Wasm module, left to right. Times show the baseline of each
-  // tool as well, in a tint of the tool's colour, before its analysis.
-  const series = absolute
-    ? tools.flatMap((tool, side) => [
-        {
-          side,
-          baseline: true,
-          fill: toolFill(tool, side, true),
-          label: baselineName(tool),
-        },
-        {
-          side,
-          baseline: false,
-          fill: toolFill(tool, side),
-          label: analysisName(tool),
-        },
-      ])
-    : tools.map((tool, side) => ({
-        side,
-        baseline: false,
-        fill: toolFill(tool, side),
-        label: `${analysisName(tool)} (baseline: ${baselineName(tool)})`,
-      }));
   const barOf = (group) => (wasm, bar) => {
     const tool = tools[bar.side];
     const analysis = bar.baseline
@@ -1685,7 +1799,7 @@ export function renderModuleComparisonPlot(tools, pairs, opts) {
         ? group.first
         : group.second;
     const cell = tool.cells.get(wasm)?.get(analysis);
-    return { stats: absolute ? cell?.runs : cell?.slowdown, cell };
+    return { stats: statsOf(cell), cell };
   };
   const panels = matched.map((group) => ({
     // The analysis, by the name the second tool gives it; above the legend
@@ -1697,35 +1811,88 @@ export function renderModuleComparisonPlot(tools, pairs, opts) {
     wasms.flatMap((wasm) => series.flatMap((s) => p.bar(wasm, s).stats ?? [])),
   );
   if (all.length === 0) throw new Error('There is no data to plot');
+  return { wasms, panels, all };
+}
+
+/**
+ * The default title of a per-module comparison, e.g. 'Slowdown per Wasm
+ * module and analysis, wasmito vs wei'; `quantity` is 'Time' or 'Slowdown'.
+ */
+function moduleComparisonTitle(quantity, tools, opts) {
+  const vs = tools.map((t) => t.label).join(' vs ');
+  return plotTitle(
+    opts.title,
+    opts.analysis !== undefined
+      ? `${quantity} per Wasm module of ${opts.analysis}, ${vs}`
+      : `${quantity} per Wasm module and analysis, ${vs}`,
+  );
+}
+
+/**
+ * One small-multiple panel per analysis that the first two tools have (see
+ * `moduleComparisonPanels`), all sharing one log y-axis. A letter replaces
+ * the bar of runs that timed out or failed.
+ *
+ * With `opts.absolute` the bars are the mean measured times
+ * (renderAbsoluteModuleComparisonPlot), otherwise the median slowdowns
+ * (renderRelativeModuleComparisonPlot).
+ */
+export function renderModuleComparisonPlot(tools, pairs, opts) {
+  return opts.absolute === true
+    ? renderAbsoluteModuleComparisonPlot(tools, pairs, opts)
+    : renderRelativeModuleComparisonPlot(tools, pairs, opts);
+}
+
+/**
+ * The absolute per-module comparison: every Wasm module gets, per tool, a
+ * lighter bar with the mean time of its baseline and then a bar with the
+ * mean time of the analysis, with a whisker from the min to the max.
+ *
+ * This function only decides what to draw (which bars, which values, which
+ * axis); renderBarChart draws it.
+ */
+export function renderAbsoluteModuleComparisonPlot(tools, pairs, opts) {
+  // The bars of a Wasm module, left to right: per tool its baseline, in a
+  // tint of the tool's colour, and then its analysis.
+  const series = tools.flatMap((tool, side) => [
+    {
+      side,
+      baseline: true,
+      fill: toolFill(tool, side, true),
+      label: baselineName(tool),
+    },
+    {
+      side,
+      baseline: false,
+      fill: toolFill(tool, side),
+      label: analysisName(tool),
+    },
+  ]);
+  // A bar shows the Stats of the measured times.
+  const { wasms, panels, all } = moduleComparisonPanels(
+    tools,
+    pairs,
+    opts,
+    series,
+    (cell) => cell?.runs,
+  );
+  const min = Math.min(...all.map((s) => s.min).filter((v) => v > 0));
 
   return renderBarChart({
-    title: plotTitle(
-      opts.title,
-      opts.analysis !== undefined
-        ? `${absolute ? 'Time' : 'Slowdown'} per Wasm module of ${opts.analysis}, ${tools.map((t) => t.label).join(' vs ')}`
-        : `${absolute ? 'Time' : 'Slowdown'} per Wasm module and analysis, ${tools.map((t) => t.label).join(' vs ')}`,
-    ),
+    title: moduleComparisonTitle('Time', tools, opts),
     heading: opts.analysis,
     series,
     wasms,
     panels,
-    // Slowdowns start at 1×, the baseline, so every bar grows up from it.
-    axisUpTo: absolute
-      ? (top) =>
-          logAxis(
-            Math.min(...all.map((s) => s.min).filter((v) => v > 0)),
-            top,
-          )
-      : (top) => logAxis(1, top, 1),
-    top: Math.max(absolute ? 0 : 1, ...all.map((s) => s.max)),
-    formatTick: absolute ? formatDuration : formatSlowdown,
-    formatValue: absolute ? barSeconds : barSlowdown,
-    // Times are the mean of the runs, slowdowns their median.
-    average: absolute ? 'mean' : 'median',
-    yTitle: absolute
-      ? 'Time (log scale)'
-      : 'Slowdown vs. baseline (×, log scale)',
-    base: absolute ? undefined : 1,
+    // From the fastest run up, without a base line.
+    axisUpTo: (top) => logAxis(min, top),
+    top: Math.max(0, ...all.map((s) => s.max)),
+    formatTick: formatDuration,
+    formatValue: barSeconds,
+    // The bars are the mean of the runs.
+    average: 'mean',
+    yTitle: 'Time (log scale)',
+    base: undefined,
     missingLabel: MISSING_MARKERS.missing.label,
     columns: Math.min(COMPARISON_COLUMNS, panels.length),
     plotH: BAR_PLOT_H,
@@ -1734,75 +1901,177 @@ export function renderModuleComparisonPlot(tools, pairs, opts) {
 }
 
 /**
- * Compares the baselines of the tools, the runtimes without analysis, in one
- * panel. With `opts.absolute` every Wasm module gets a bar per runtime with its
- * mean time; otherwise a bar per runtime after the first with its time
- * relative to the median time of the first, below 1× when it is faster.
+ * The relative per-module comparison: every Wasm module gets a bar per tool
+ * from 1× to the median slowdown of its runs (relative to the tool's own
+ * baseline), with a whisker from the min to the max.
+ *
+ * This function only decides what to draw (which bars, which values, which
+ * axis); renderBarChart draws it.
  */
-export function renderBaselineComparisonPlot(tools, opts) {
-  const [first, ...others] = tools;
-  const absolute = opts.absolute === true;
+export function renderRelativeModuleComparisonPlot(tools, pairs, opts) {
+  // The bars of a Wasm module, left to right: one per tool.
+  const series = tools.map((tool, side) => ({
+    side,
+    baseline: false,
+    fill: toolFill(tool, side),
+    label: `${analysisName(tool)} (baseline: ${baselineName(tool)})`,
+  }));
+  // A bar shows the Stats of the slowdowns.
+  const { wasms, panels, all } = moduleComparisonPanels(
+    tools,
+    pairs,
+    opts,
+    series,
+    (cell) => cell?.slowdown,
+  );
+
+  return renderBarChart({
+    title: moduleComparisonTitle('Slowdown', tools, opts),
+    heading: opts.analysis,
+    series,
+    wasms,
+    panels,
+    // Slowdowns start at 1×, the baseline, so every bar grows up from it.
+    axisUpTo: (top) => logAxis(1, top, 1),
+    top: Math.max(1, ...all.map((s) => s.max)),
+    formatTick: formatSlowdown,
+    formatValue: barSlowdown,
+    // The bars are the median of the runs.
+    average: 'median',
+    yTitle: 'Slowdown vs. baseline (×, log scale)',
+    base: 1,
+    missingLabel: MISSING_MARKERS.missing.label,
+    columns: Math.min(COMPARISON_COLUMNS, panels.length),
+    plotH: BAR_PLOT_H,
+    opts,
+  });
+}
+
+/** The cell of the run without analysis of `tool` on `wasm`, if any. */
+function baselineCell(tool, wasm) {
+  return tool.cells.get(wasm)?.get(tool.baseline);
+}
+
+/**
+ * What the absolute and the relative baseline comparison share: the Wasm
+ * modules that at least one tool has a baseline run for, and the Stats of
+ * every bar (`bar(wasm, series)`), to size the axis.
+ */
+function baselineComparisonData(tools, series, bar) {
   const wasms = comparedWasms(tools, (wasm) =>
     tools.some((t) => t.cells.get(wasm)?.has(t.baseline)),
   );
-  const cellOf = (tool, wasm) => tool.cells.get(wasm)?.get(tool.baseline);
-
-  const series = absolute
-    ? tools.map((tool, side) => ({
-        side,
-        baseline: true,
-        fill: toolFill(tool, side, true),
-        label: baselineName(tool),
-      }))
-    : others.map((tool, i) => ({
-        side: i + 1,
-        baseline: true,
-        fill: toolFill(tool, i + 1, true),
-        label: `${baselineName(tool)} relative to ${baselineName(first)} (${timeColumnOf(tool)} / median ${timeColumnOf(first)})`,
-      }));
-  const bar = (wasm, s) => {
-    if (absolute) {
-      const cell = cellOf(tools[s.side], wasm);
-      return { stats: cell?.runs, cell };
-    }
-    const reference = cellOf(first, wasm);
-    const cell = cellOf(tools[s.side], wasm);
-    if (reference?.runs === undefined) return { cell: reference };
-    if (cell?.runs === undefined) return { cell };
-    return { stats: scaleStats(cell.runs, 1 / reference.runs.median), cell };
-  };
   const all = wasms.flatMap((wasm) =>
     series.flatMap((s) => bar(wasm, s).stats ?? []),
   );
   if (all.length === 0) throw new Error('There is no data to plot');
-  const min = Math.min(...all.map((s) => s.min).filter((v) => v > 0));
-  const max = Math.max(...all.map((s) => s.max));
+  return {
+    wasms,
+    min: Math.min(...all.map((s) => s.min).filter((v) => v > 0)),
+    max: Math.max(...all.map((s) => s.max)),
+  };
+}
+
+/**
+ * Compares the baselines of the tools, the runtimes without analysis, in one
+ * panel. With `opts.absolute` every Wasm module gets a bar per runtime with
+ * its mean time (renderAbsoluteBaselineComparisonPlot); otherwise a bar per
+ * runtime after the first with its time relative to the median time of the
+ * first (renderRelativeBaselineComparisonPlot).
+ */
+export function renderBaselineComparisonPlot(tools, opts) {
+  return opts.absolute === true
+    ? renderAbsoluteBaselineComparisonPlot(tools, opts)
+    : renderRelativeBaselineComparisonPlot(tools, opts);
+}
+
+/**
+ * The absolute baseline comparison: every Wasm module gets a bar per tool
+ * with the mean time of its run without analysis.
+ */
+export function renderAbsoluteBaselineComparisonPlot(tools, opts) {
+  // A bar per tool.
+  const series = tools.map((tool, side) => ({
+    side,
+    baseline: true,
+    fill: toolFill(tool, side, true),
+    label: baselineName(tool),
+  }));
+  const bar = (wasm, s) => {
+    const cell = baselineCell(tools[s.side], wasm);
+    return { stats: cell?.runs, cell };
+  };
+  const { wasms, min, max } = baselineComparisonData(tools, series, bar);
 
   return renderBarChart({
     title: plotTitle(
       opts.title,
-      absolute
-        ? `Time per Wasm module without analysis, ${tools.map(baselineName).join(' vs ')}`
-        : `Time of ${others.map(baselineName).join(' and ')} relative to ${baselineName(first)} per Wasm module, without analysis`,
+      `Time per Wasm module without analysis, ${tools.map(baselineName).join(' vs ')}`,
     ),
     series,
     wasms,
     panels: [{ title: '', bar }],
-    axisUpTo: absolute
-      ? (top) => logAxis(min, top)
-      : // Room below the lowest bar for the value written under it.
-        (top) => logAxis(Math.min(1, min) / 3, top),
-    top: absolute ? max : Math.max(1, max),
-    formatTick: absolute ? formatDuration : formatSlowdown,
-    formatValue: absolute ? barSeconds : barSlowdown,
-    // Times are the mean of the runs, slowdowns their median.
-    average: absolute ? 'mean' : 'median',
-    yTitle: absolute
-      ? 'Time (log scale)'
-      : others.length === 1
+    axisUpTo: (top) => logAxis(min, top),
+    top: max,
+    formatTick: formatDuration,
+    formatValue: barSeconds,
+    // The bars are the mean of the runs.
+    average: 'mean',
+    yTitle: 'Time (log scale)',
+    base: undefined,
+    missingLabel: MISSING_MARKERS.missing.label,
+    columns: 1,
+    plotH: 2 * BAR_PLOT_H,
+    opts,
+  });
+}
+
+/**
+ * The relative baseline comparison: every Wasm module gets a bar per tool
+ * after the first with the times of its run without analysis divided by the
+ * median time of the first tool, below 1× when it is faster.
+ */
+export function renderRelativeBaselineComparisonPlot(tools, opts) {
+  const [first, ...others] = tools;
+  // A bar per tool after the first, since the first relative to itself
+  // would always be 1×.
+  const series = others.map((tool, i) => ({
+    side: i + 1,
+    baseline: true,
+    fill: toolFill(tool, i + 1, true),
+    label: `${baselineName(tool)} relative to ${baselineName(first)} (${timeColumnOf(tool)} / median ${timeColumnOf(first)})`,
+  }));
+  // The times of the tool divided by the median time of the first tool on
+  // the same Wasm module; no bar when either has no runs.
+  const bar = (wasm, s) => {
+    const reference = baselineCell(first, wasm);
+    const cell = baselineCell(tools[s.side], wasm);
+    if (reference?.runs === undefined) return { cell: reference };
+    if (cell?.runs === undefined) return { cell };
+    return { stats: scaleStats(cell.runs, 1 / reference.runs.median), cell };
+  };
+  const { wasms, min, max } = baselineComparisonData(tools, series, bar);
+
+  return renderBarChart({
+    title: plotTitle(
+      opts.title,
+      `Time of ${others.map(baselineName).join(' and ')} relative to ${baselineName(first)} per Wasm module, without analysis`,
+    ),
+    series,
+    wasms,
+    panels: [{ title: '', bar }],
+    // Room below the lowest bar for the value written under it.
+    axisUpTo: (top) => logAxis(Math.min(1, min) / 3, top),
+    top: Math.max(1, max),
+    formatTick: formatSlowdown,
+    formatValue: barSlowdown,
+    // The bars are the median of the runs.
+    average: 'median',
+    yTitle:
+      others.length === 1
         ? `${baselineName(others[0])} / ${baselineName(first)} time (×, log scale)`
         : `Time / ${baselineName(first)} time (×, log scale)`,
-    base: absolute ? undefined : 1,
+    base: 1,
     missingLabel: MISSING_MARKERS.missing.label,
     columns: 1,
     plotH: 2 * BAR_PLOT_H,
@@ -1816,17 +2085,25 @@ export function renderBaselineComparisonPlot(tools, opts) {
  * min to the max, or a letter saying why there is no bar.
  */
 function renderBarChart(spec, raises = 0) {
+  // The drawing happens in two passes: first everything is measured and laid
+  // out (sizes, where the bars and the values written on them go, the height
+  // of the plot), then the canvas is created and drawn on. When the values
+  // over the tallest bars do not fit under the top of the axis, the function
+  // calls itself again with the axis raised (`raises` times AXIS_RAISE).
   const { series, wasms, panels, formatTick, columns, plotH, opts } = spec;
   const axis = spec.axisUpTo(spec.top * AXIS_RAISE ** raises);
   const showMinMax = opts.showMinMax !== false;
   const width = opts.width;
+  // A tiny canvas only used to measure text before the real one exists.
   const scratch = createCanvas(1, 1).getContext('2d');
   setFont(scratch, 11);
+  // Room under a panel for the slanted Wasm module names.
   const longestLabel = Math.max(
     ...wasms.map((w) => scratch.measureText(wasmDisplayName(w)).width),
   );
   const xLabelH = Math.ceil(longestLabel * Math.sin(X_LABEL_ANGLE)) + 22;
 
+  // The panels in a grid of `columns` columns.
   const panelRows = Math.ceil(panels.length / columns);
   const panelW = (width - 2 * MARGIN - (columns - 1) * COLUMN_GAP) / columns;
   // Room left of the plot area for the y-axis title and the widest tick label.
@@ -1850,6 +2127,8 @@ function renderBarChart(spec, raises = 0) {
     k === 0 ? 0 : bar.side === series[k - 1].side ? BAR_GAP : TOOL_GAP,
   );
   const gapsW = gaps.reduce((sum, g) => sum + g, 0);
+  // Every Wasm module gets an equal slot of the plot area; its bars take at
+  // most GROUP_FILL of it, each at most MAX_BAR_W wide.
   const groupW = plotW / wasms.length;
   const barW = Math.min(
     MAX_BAR_W,
@@ -1864,11 +2143,15 @@ function renderBarChart(spec, raises = 0) {
    */
   const layoutPanel = (panel, x0, plotTop) => {
     const plotBottom = plotTop + plotH;
+    // The y coordinate of value `v` (axis.position is 0 at the bottom of
+    // the axis and 1 at its top).
     const py = (v) => plotBottom - axis.position(v) * plotH;
+    // Where the bars start: the base value (1× for slowdowns) or the bottom.
     const baseY =
       spec.base === undefined
         ? plotBottom + 0.5
         : Math.round(py(spec.base)) + 0.5;
+    // Every bar: its left edge, its Stats and its height (mean or median).
     const bars = [];
     wasms.forEach((wasm, i) => {
       const center = x0 + (i + 0.5) * groupW;
@@ -1885,6 +2168,7 @@ function renderBarChart(spec, raises = 0) {
         bars.push({ left, series: s, stats, cell, value });
       });
     });
+    // The values written on the bars, moved where they overlap nothing.
     const labels = placeValueLabels(
       scratch,
       bars.flatMap((b) => {
@@ -1999,8 +2283,10 @@ function renderBarChart(spec, raises = 0) {
     (panelRows - 1) * PANEL_GAP +
     MARGIN;
 
+  // Second pass: everything is measured, so draw.
   const { canvas, ctx } = createPlotCanvas(opts.format, width, height);
 
+  // The title, the heading and the legend.
   if (spec.title !== undefined) {
     ctx.textAlign = 'left';
     ctx.fillStyle = COLORS.ink;
@@ -2015,6 +2301,8 @@ function renderBarChart(spec, raises = 0) {
   }
   drawComparisonLegend(ctx, legend, legendX, legendY, legendW);
 
+  // Every panel: its name, the grid with the tick labels, the bars with
+  // their whiskers and values, the Wasm module names, and the base line.
   panels.forEach((panel, idx) => {
     const col = idx % columns;
     const row = Math.floor(idx / columns);
@@ -2063,6 +2351,7 @@ function renderBarChart(spec, raises = 0) {
         continue;
       }
       drawBar(ctx, left, barW, baseY, py(value), s.fill);
+      // The whisker from the min to the max of the runs, with caps.
       if (showMinMax && stats.max > stats.min) {
         ctx.strokeStyle = COLORS.ink;
         ctx.lineWidth = 1;
@@ -2092,6 +2381,7 @@ function renderBarChart(spec, raises = 0) {
       ctx.restore();
     });
 
+    // The line the bars grow from.
     ctx.strokeStyle = COLORS.inkSecondary;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -2581,9 +2871,11 @@ export function formatPhaseBreakdownsCsv(breakdowns) {
   return lines.join('\n') + '\n';
 }
 
+/** Height of the plot area of one panel of the phases plot. */
 const PHASE_PLOT_H = 190;
 /** Room above a panel's plot area for the total written over each bar. */
 const TOTAL_LABEL_H = 16;
+/** The widest a stacked bar may be. */
 const MAX_STACK_W = 20;
 /** Room right of a stack for the share of every phase. */
 const OUTSIDE_LABEL_W = 20;
@@ -2609,6 +2901,7 @@ export function renderPhasePlot(breakdowns, opts) {
     ...new Set([...breakdowns.values()].flatMap((m) => [...m.keys()])),
   ].sort((a, b) => wasmDisplayName(a).localeCompare(wasmDisplayName(b)));
   if (analyses.length === 0) throw new Error('There is no data to plot');
+  // The phases the CSV has, bottom to top in the stack.
   const phases = breakdownPhases(breakdowns);
   const isolateSpawn =
     opts.isolateSpawn === true && phases.includes('spawn_ms');
@@ -2628,6 +2921,7 @@ export function renderPhasePlot(breakdowns, opts) {
     opts.title,
     `Share of every phase in ${phaseTotalName(phases)} per Wasm module and analysis, wasmito`,
   );
+  // One panel per analysis, in a grid of `columns` columns.
   const columns = Math.min(COMPARISON_COLUMNS, analyses.length);
   const panelRows = Math.ceil(analyses.length / columns);
   const panelW = (width - 2 * MARGIN - (columns - 1) * COLUMN_GAP) / columns;
@@ -2661,6 +2955,7 @@ export function renderPhasePlot(breakdowns, opts) {
     : Math.min(MAX_STACK_W, groupW - OUTSIDE_LABEL_W - 8);
   const groupBarsW =
     barW + OUTSIDE_LABEL_W + (isolateSpawn ? SPAWN_BAR_GAP + barW : 0);
+  // The y-axis is the share of the total time, 0% to 100%.
   const ticks = [0, 0.25, 0.5, 0.75, 1];
 
   analyses.forEach((analysis, idx) => {
@@ -2670,8 +2965,10 @@ export function renderPhasePlot(breakdowns, opts) {
     const y0 = headerH + row * (panelH + PANEL_GAP);
     const plotTop = y0 + PANEL_TITLE_H + TOTAL_LABEL_H + 8;
     const plotBottom = plotTop + PHASE_PLOT_H;
+    // The y coordinate of a share (0 to 1) of the total time.
     const py = (share) => plotBottom - share * PHASE_PLOT_H;
 
+    // The name of the analysis, then the grid with the percentages.
     ctx.textAlign = 'left';
     ctx.fillStyle = COLORS.ink;
     setFont(ctx, 13, 'bold');
@@ -2707,6 +3004,7 @@ export function renderPhasePlot(breakdowns, opts) {
       const barCenter = left + barW / 2;
       const b = perAnalysis.get(wasm);
       if (b === undefined || typeof b === 'string') {
+        // No successful run: a letter instead of the stack (T, E or –).
         ctx.fillStyle = COLORS.inkSecondary;
         setFont(ctx, 10, 'bold');
         ctx.textAlign = 'center';
@@ -2718,6 +3016,8 @@ export function renderPhasePlot(breakdowns, opts) {
           plotBottom - MARKER_LIFT,
         );
       } else {
+        // One segment per phase with a time, bottom to top; its height is
+        // the phase's share of the mean total time.
         const segments = stacked
           .map((p) => ({
             value: phaseTime(b, p, phases),
@@ -2773,6 +3073,7 @@ export function renderPhasePlot(breakdowns, opts) {
         );
       }
 
+      // The Wasm module, slanted under its stack.
       ctx.save();
       ctx.translate(center, plotBottom + 12);
       ctx.rotate(-X_LABEL_ANGLE);
@@ -2919,6 +3220,12 @@ export function writePhasePlot(breakdowns, opts, outputPath) {
   fs.writeFileSync(outputPath, renderPhasePlot(breakdowns, opts));
 }
 
+// ---------------------------------------------------------------------------
+// Drawing helpers of the violin and range plots (renderBenchmarkPlot and the
+// slowdown plots of the `plot` command)
+// ---------------------------------------------------------------------------
+
+/** The note under the subtitle saying how many failed runs are left out. */
 function failedRunsNote(count) {
   return count === 1
     ? '1 failed run is not plotted.'
@@ -2935,12 +3242,17 @@ function labelGutter(ctx, panels) {
   return Math.max(0, ...widths) + LABEL_GUTTER_PAD;
 }
 
+/** The notes as one text, wrapped to the width of the plot. */
 function wrapNotes(ctx, notes, width) {
   return notes.length > 0
     ? wrapText(ctx, notes.join(' '), width - 2 * MARGIN)
     : [];
 }
 
+/**
+ * The label of every row of `panel` left of its plot area, with a dot in the
+ * row's colour first when the panel has swatches.
+ */
 function drawRowLabels(ctx, panel, rowH, x, panelY) {
   const offsets = rowOffsets(panel.rows, rowH);
   setFont(ctx, 12);
@@ -2959,6 +3271,11 @@ function drawRowLabels(ctx, panel, rowH, x, panelY) {
   });
 }
 
+/**
+ * One panel of a violin or range plot at `layout.x0`, `layout.y0`: its title
+ * and detail, the grid and the axis, and a row per Wasm module (a violin or a
+ * range, see drawViolinRow and drawRangeRow).
+ */
 function drawPanel(ctx, panel, layout) {
   const { rowH, x0, y0, plotW, kind, logScale, axisTitle, formatValue } =
     layout;
@@ -3167,6 +3484,7 @@ function drawViolinRow(ctx, values, s, px, cy, rowH, logScale, color) {
   drawDot(ctx, px(s.mean), cy, color);
 }
 
+/** The vertical tick that marks the median of a row. */
 function drawMedianTick(ctx, x, cy, halfHeight) {
   ctx.strokeStyle = COLORS.ink;
   ctx.lineWidth = 2;
@@ -3176,6 +3494,7 @@ function drawMedianTick(ctx, x, cy, halfHeight) {
   ctx.stroke();
 }
 
+/** The dot that marks the mean of a row, with a ring in the background colour. */
 function drawDot(ctx, x, y, color) {
   ctx.fillStyle = COLORS.surface;
   ctx.beginPath();
@@ -3187,6 +3506,11 @@ function drawDot(ctx, x, y, color) {
   ctx.fill();
 }
 
+/**
+ * The legend of a violin or range plot: the tools by colour (if any) and
+ * sample shapes that explain the marks (violin or range, mean, median,
+ * mean ± 1 standard deviation).
+ */
 function drawLegend(ctx, x, y, kind, showSpread, { accent, tools }) {
   setFont(ctx, 12);
   ctx.textAlign = 'left';

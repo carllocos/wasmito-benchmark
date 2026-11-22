@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Usage: build_wei_modules_whamm.sh [--output <dir>]
+# Usage: build_wei_modules_whamm.sh [--output <dir>] [--wasmr3-only]
 #
 # Compiles, for Wizard's Whamm Engine Interface (wei), every whamm script of
 # bench_config/whamm_scripts.csv and of whamm-concurrency/ against every
@@ -14,6 +14,9 @@
 # next to the unchanged application (wizeng --monitors=<output> <module>); the
 # application is not rewritten, so the monitor does not depend on --app.
 #
+# With --wasmr3-only, only the Wasm-R3 modules are compiled against (not the
+# MCU modules).
+#
 # Results are written to <dir> (default bench_output/modules_overhead/whamm-wei), in a
 # subdirectory per whamm script:
 #   <name>/<module>.wasm  the wei monitor
@@ -26,15 +29,17 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT_DIR/scripts/env.sh"
 
 usage() {
-    echo "Usage: $0 [--output <dir>]" >&2
+    echo "Usage: $0 [--output <dir>] [--wasmr3-only]" >&2
     exit 1
 }
 
 OUT_DIR="$MODULES_OVERHEAD_DIR/whamm-wei"
+WASMR3_ONLY=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --output=*) OUT_DIR=${1#*=}; shift ;;
         --output) [ $# -ge 2 ] || usage; OUT_DIR=$2; shift 2 ;;
+        --wasmr3-only) WASMR3_ONLY=1; shift ;;
         *) echo "Unknown option '$1'" >&2; usage ;;
     esac
 done
@@ -44,7 +49,11 @@ if ! command -v whamm >/dev/null 2>&1; then
     exit 1
 fi
 
-MODULES=$(ls "$WASMR3_MODULES_DIR"/*.wasm "$ROOT_DIR"/bench_input_data/mcu_modules/*/wasm/*.wasm 2>/dev/null)
+if [ "$WASMR3_ONLY" = 1 ]; then
+    MODULES=$(ls "$WASMR3_MODULES_DIR"/*.wasm 2>/dev/null)
+else
+    MODULES=$(ls "$WASMR3_MODULES_DIR"/*.wasm "$ROOT_DIR"/bench_input_data/mcu_modules/*/wasm/*.wasm 2>/dev/null)
+fi
 if [ -z "$MODULES" ]; then
     echo "error: no modules found (run scripts/install_wasmr3.sh first)" >&2
     exit 1

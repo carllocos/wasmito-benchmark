@@ -52,7 +52,6 @@ them).
 | `cli.js` | entry point (replaces Wasmito's `cli/cli.ts`, with only `plot`) |
 | `plot_command.js` | `cli/plot_command.ts` |
 | `plot_util.js` | `src/util/plot_util.ts` |
-| `markdown_tables.js` | `src/util/markdown_tables.ts` |
 | `logger.js` | a small stand-in for `src/logger/logger.ts` (no winston) |
 
 The TypeScript interfaces and type aliases are kept as JSDoc `@typedef`s.
