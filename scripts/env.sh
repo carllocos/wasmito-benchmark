@@ -29,6 +29,12 @@ export WHAMM_CORE="$WHAMM_DIR/target/wasm32-wasip1/release/whamm_core.wasm"
 # Rust toolchain whamm is built with (the dependencies locked in whamm v1.2.1
 # need rustc >= 1.94), installed by install_whamm.sh
 export WHAMM_RUST_VERSION=1.94.0
+# Rust toolchain Wastrumentation is built with and compiles its analyses with,
+# installed by build_portable_modules_wastrumentation.sh. The submodule's
+# rust-toolchain.toml asks for an unpinned nightly, but wastrumentation-cli
+# embeds cargo 0.91, whose builds fail on later nightlies (e.g. 2026-11-24:
+# "found crate `cfg_if` compiled by an incompatible version of rustc").
+export WASTRUMENTATION_RUST_VERSION=nightly-2026-11-01
 
 # Wasm modules to benchmark, copied by install_wasmr3.sh from the list in
 # bench_config/wasmr3_modules_to_keep.txt

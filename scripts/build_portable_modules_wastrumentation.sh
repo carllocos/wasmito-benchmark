@@ -40,11 +40,12 @@
 #   <name>/<module>.log   the output of wastrumentation-cli
 #
 # wastrumentation-cli is built once in release mode with
-# `cargo build --release` (with the nightly toolchain of the submodule's
-# rust-toolchain.toml, installed through rustup if missing) before the
-# modules are instrumented. A failing instrumentation does not stop the rest;
-# at the end, every (analysis, module) that failed is listed and the script
-# exits non-zero.
+# `cargo build --release` before the modules are instrumented. Both the CLI
+# and the analyses are built with the nightly $WASTRUMENTATION_RUST_VERSION
+# of env.sh (installed through rustup if missing), which overrides the
+# unpinned nightly of the submodule's rust-toolchain.toml. A failing
+# instrumentation does not stop the rest; at the end, every (analysis, module)
+# that failed is listed and the script exits non-zero.
 
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT_DIR/scripts/env.sh"
@@ -136,11 +137,13 @@ if [ ! -f "$ANALYSES_CSV" ]; then
     exit 1
 fi
 
-echo "> Installing the toolchain of $WASTRUMENTATION_DIR/rust-toolchain.toml"
-if ! (cd "$WASTRUMENTATION_DIR" && rustup toolchain install); then
+echo "> Installing the Rust toolchain $WASTRUMENTATION_RUST_VERSION"
+if ! rustup toolchain install "$WASTRUMENTATION_RUST_VERSION" --profile minimal \
+        --target wasm32-unknown-unknown --target wasm32-wasip1; then
     echo "error: installing the wastrumentation toolchain failed" >&2
     exit 1
 fi
+export RUSTUP_TOOLCHAIN=$WASTRUMENTATION_RUST_VERSION
 
 echo "> Building wastrumentation-cli"
 if ! (cd "$WASTRUMENTATION_DIR" && cargo build --release --bin wastrumentation-cli); then
@@ -187,6 +190,11 @@ instrument() {
 # Instruments every module with the analysis $1, named $2, with hooks $3.
 instrument_all_modules() {
     mkdir -p "$OUT_BASE/$2"
+    # The cargo embedded in wastrumentation-cli does not rebuild artifacts
+    # left by another rustc (it fails with "found crate ... compiled by an
+    # incompatible version of rustc"), so the analysis' build directory is
+    # cleared once before its first use.
+    rm -rf "$(dirname "$1")/target"
     if [ -d "$MODULES" ]; then
         for MODULE in "$MODULES"/*.wasm; do
             [ -f "$MODULE" ] || continue

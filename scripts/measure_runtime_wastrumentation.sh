@@ -57,7 +57,9 @@
 #
 # If a run times out or fails (non-zero exit status), the remaining runs of
 # that (module, analysis) are skipped and the script continues with the next.
-# A module that was not instrumented by an analysis is reported and skipped.
+# A missing or empty instrumented module (wastrumentation-cli leaves an empty
+# one behind when it fails) is an error: they are all listed and the script
+# exits before any run.
 #
 # Results, in the format of measure_runtime_wei.sh:
 #   <results>/<module>.<analysis>.output  the wizeng output of every run
@@ -254,6 +256,34 @@ run_module() {
     rm -f "$RUN_TMP" "$STATUS_TMP"
 }
 
+# Every (analysis, module) must have been instrumented. wastrumentation-cli
+# leaves an empty module behind when it fails; running it would only fail in
+# wizeng ("expected magic word"), so stop before any run.
+MISSING=""
+EMPTY=""
+for ANALYSIS_TAG in $SELECTED; do
+    for ORIGINAL in "$MODULES"/*.wasm; do
+        [ -f "$ORIGINAL" ] || continue
+        MODULE="$INSTRUMENTED/$ANALYSIS_TAG/$(basename "$ORIGINAL")"
+        if [ ! -f "$MODULE" ]; then
+            MISSING="$MISSING  $MODULE
+"
+        elif [ ! -s "$MODULE" ]; then
+            EMPTY="$EMPTY  $MODULE
+"
+        fi
+    done
+done
+if [ -n "$MISSING" ]; then
+    echo "error: the following instrumented modules are missing:" >&2
+    printf '%s' "$MISSING" >&2
+fi
+if [ -n "$EMPTY" ]; then
+    echo "error: the following instrumented modules are empty (instrumentation failed, see the .log next to each):" >&2
+    printf '%s' "$EMPTY" >&2
+fi
+[ -z "$MISSING" ] && [ -z "$EMPTY" ] || exit 1
+
 if [ -z "$NO_BASELINE" ]; then
     ANALYSIS_TAG=none
     for MODULE in "$MODULES"/*.wasm; do
@@ -266,11 +296,6 @@ for ANALYSIS_TAG in $SELECTED; do
     for ORIGINAL in "$MODULES"/*.wasm; do
         [ -f "$ORIGINAL" ] || continue
         NAME=$(basename "$ORIGINAL")
-        MODULE="$INSTRUMENTED/$ANALYSIS_TAG/$NAME"
-        if [ ! -f "$MODULE" ]; then
-            echo "warning: no $MODULE (not instrumented), skipped" >&2
-            continue
-        fi
-        run_module "$MODULE" "$NAME"
+        run_module "$INSTRUMENTED/$ANALYSIS_TAG/$NAME" "$NAME"
     done
 done
