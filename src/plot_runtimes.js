@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // plot_runtimes.js
 //
-// Reads the runtime metrics of Wasmito and Whamm (wei) and, optionally, the
-// phases of Wasmito, and plots them with Vega-Lite.
+// Reads the runtime metrics of Wasmito, Whamm (wei) and, when measured,
+// Wastrumentation and, optionally, the phases of Wasmito, and plots them
+// with Vega-Lite.
 //
 // For now only the runtime overhead is plotted (plotSlowdowns), like
 // analysis/analysis_relative of scripts/plot_runtime.sh but with the
@@ -39,7 +40,7 @@
 //
 //   runtimes: Map<framework, Framework>, e.g. runtimes.get('wasmito'), where
 //     Framework = {
-//       framework: 'wasmito' | 'wei',
+//       framework: 'wasmito' | 'wei' | 'wastrumentation',
 //       runtime:   'warduino' | 'wizard opt', the VM it ran on
 //       baseline:  'no-analysis' | 'none', the name of the run without
 //                  any analysis
@@ -88,23 +89,28 @@ const PLOT_FORMATS = ['pdf'];
 const TIMEOUT_MINUTES = 10;
 
 // The analyses to plot, one entry per analysis:
-//   [<name in Wasmito>, <name in Whamm>, <name in the plots>]
+//   [<name in Wasmito>, <name in Whamm>, <name in Wastrumentation>,
+//    <name in the plots>]
 // These are the analyses with which Gilbert et al. benchmarked wei (the
-// Whamm column of the analyses table of the paper). The names in Wasmito
-// and Whamm are those of the analysis column of the runtime metrics CSV.
+// Whamm column of the analyses table of the paper). The names in the
+// frameworks are those of the analysis column of the runtime metrics CSV;
+// '' when the framework does not have the analysis (no bar is drawn for it).
 // The panels follow the order of this list.
 const ANALYSES = [
-  ['basic-block', 'basic_blocks', 'basic-block'],
-  ['branches', 'branches', 'branches'],
-  ['cache_sim', 'cache_sim', 'cache_sim'],
-  ['call-graph', 'call_graph', 'call-graph'],
-  ['hotness', 'hotness', 'hotness'],
-  ['icount', 'icount', 'icount'],
-  ['imix', 'imix', 'instruction-mix'],
-  ['instr-coverage', 'instr_coverage', 'instr-coverage'],
-  ['loop_tracer', 'loop_tracer', 'loop_tracer'],
-  ['mem_access', 'mem_access', 'mem_access'],
+  ['basic-block', 'basic_blocks', 'basic_blocks', 'basic-block'],
+  ['branches', 'branches', 'branches', 'branches'],
+  ['cache_sim', 'cache_sim', '', 'cache_sim'],
+  ['call-graph', 'call_graph', 'call_graph', 'call-graph'],
+  ['hotness', 'hotness', '', 'hotness'],
+  ['icount', 'icount', '', 'icount'],
+  ['imix', 'imix', 'imix', 'instruction-mix'],
+  ['instr-coverage', 'instr_coverage', 'instr_coverage', 'instr-coverage'],
+  ['loop_tracer', 'loop_tracer', '', 'loop_tracer'],
+  ['mem_access', 'mem_access', 'mem_access', 'mem_access'],
 ];
+
+// The index of the name in the plots in every entry of ANALYSES.
+const PLOT_NAME = 3;
 
 // ---------------------------------------------------------------------------
 // Small file system helpers
@@ -272,15 +278,20 @@ function readPhases(csvPath) {
 
 /**
  * Which analysis name of ANALYSES every framework uses: Wasmito the first,
- * wei (Whamm) the second.
+ * wei (Whamm) the second, Wastrumentation the third.
  */
-const ANALYSIS_NAME_INDEX = { wasmito: 0, wei: 1 };
+const ANALYSIS_NAME_INDEX = { wasmito: 0, wei: 1, wastrumentation: 2 };
 
 /**
  * The colour of every framework: the same blue and green as the plots of
- * scripts/plot_runtime.sh.
+ * scripts/plot_runtime.sh, and the orange of Wastrumentation in the memory
+ * plot (plot_memory_use.js).
  */
-const FRAMEWORK_COLORS = { wasmito: '#0072b2', wei: '#009e73' };
+const FRAMEWORK_COLORS = {
+  wasmito: '#0072b2',
+  wei: '#009e73',
+  wastrumentation: '#e69f00',
+};
 
 // The title of the y-axis of the overhead plots.
 // The titles of the y-axis of the overhead plots: of a single analysis, and
@@ -350,7 +361,7 @@ function overheadRows(runtimes) {
 
   const rows = [];
   for (const names of ANALYSES) {
-    const plotName = names[2];
+    const plotName = names[PLOT_NAME];
     const nameIn = (f) => names[ANALYSIS_NAME_INDEX[f.framework]];
     const hasAnalysis = frameworks.some((f) =>
       [...f.cells.values()].some((perWasm) => perWasm.has(nameIn(f))),
@@ -358,6 +369,8 @@ function overheadRows(runtimes) {
     if (!hasAnalysis) continue;
 
     for (const f of frameworks) {
+      // A framework without the analysis gets no bars (nor markers).
+      if (nameIn(f) === '') continue;
       for (const wasm of wasms) {
         const perWasm = f.cells.get(wasm);
         const cell = perWasm?.get(nameIn(f));
@@ -634,9 +647,16 @@ function overheadPanel(rows, opts) {
   };
 }
 
-/** The frameworks of `rows`, in their order, and their colours. */
+/**
+ * The frameworks of `rows`, in the order of FRAMEWORK_COLORS (so that every
+ * panel puts the bars of a framework at the same place, even when a
+ * framework lacks the analysis), and their colours.
+ */
 function legendOf(rows) {
-  const legends = [...new Map(rows.map((r) => [r.legend, r.framework]))];
+  const order = Object.keys(FRAMEWORK_COLORS);
+  const legends = [...new Map(rows.map((r) => [r.legend, r.framework]))].sort(
+    ([, a], [, b]) => order.indexOf(a) - order.indexOf(b),
+  );
   return {
     legendDomain: legends.map(([legend]) => legend),
     legendColors: legends.map(([, f]) => FRAMEWORK_COLORS[f]),
@@ -1446,7 +1466,11 @@ const PAGE_LAYOUT = {
 const RUNTIME_TITLE = 'Runtime (s, log)';
 
 // A lighter tint of every framework colour, for the runs without analysis.
-const FRAMEWORK_BASELINE_COLORS = { wasmito: '#7fb8d8', wei: '#7fcfb9' };
+const FRAMEWORK_BASELINE_COLORS = {
+  wasmito: '#7fb8d8',
+  wei: '#7fcfb9',
+  wastrumentation: '#f3cf80',
+};
 
 /**
  * The data of analysis_absolute, as a flat list of rows, per analysis of
@@ -1460,11 +1484,25 @@ const FRAMEWORK_BASELINE_COLORS = { wasmito: '#7fb8d8', wei: '#7fcfb9' };
  * 'wasmito + warduino, with analysis'.
  */
 function absoluteRows(runtimes) {
-  const frameworks = [...runtimes.values()];
+  const order = Object.keys(FRAMEWORK_COLORS);
+  const frameworks = [...runtimes.values()].sort(
+    (a, b) => order.indexOf(a.framework) - order.indexOf(b.framework),
+  );
   const wasms = [...new Set(frameworks.flatMap((f) => [...f.cells.keys()]))];
+  // The VMs that more than one framework runs on (wei and Wastrumentation
+  // both run on the optimised Wizard engine): their baselines are named
+  // after the framework too, since each framework measured its own.
+  const runtimeCount = new Map();
+  for (const f of frameworks) {
+    runtimeCount.set(f.runtime, (runtimeCount.get(f.runtime) ?? 0) + 1);
+  }
+  const baselineName = (f) =>
+    runtimeCount.get(f.runtime) > 1
+      ? `${f.runtime} (${f.framework} runs), no analysis`
+      : `${f.runtime}, no analysis`;
   const rows = [];
   for (const names of ANALYSES) {
-    const plotName = names[2];
+    const plotName = names[PLOT_NAME];
     const nameIn = (f) => names[ANALYSIS_NAME_INDEX[f.framework]];
     const hasAnalysis = frameworks.some((f) =>
       [...f.cells.values()].some((perWasm) => perWasm.has(nameIn(f))),
@@ -1472,6 +1510,8 @@ function absoluteRows(runtimes) {
     if (!hasAnalysis) continue;
 
     for (const f of frameworks) {
+      // A framework without the analysis gets no bars (nor markers).
+      if (nameIn(f) === '') continue;
       for (const wasm of wasms) {
         for (const baseline of [true, false]) {
           const cell = f.cells
@@ -1485,7 +1525,7 @@ function absoluteRows(runtimes) {
             // Without analysis only the VM runs, so the baseline is named
             // after the VM alone, e.g. 'warduino, no analysis'.
             series: baseline
-              ? `${f.runtime}, no analysis`
+              ? baselineName(f)
               : `${frameworkLegend(f)}, with analysis`,
           };
           if (cell?.time !== undefined) {
@@ -1512,7 +1552,8 @@ function absoluteRows(runtimes) {
  */
 function absoluteFigureSpec(rows) {
   const analyses = [...new Set(rows.map((r) => r.analysis))];
-  // The four bars of a Wasm module, left to right, and their colours.
+  // The bars of a Wasm module (two per framework), left to right, and
+  // their colours.
   const series = [...new Map(rows.map((r) => [r.series, r]))].map(
     ([name, r]) => ({
       name,
@@ -1623,7 +1664,7 @@ const program = new Command();
 program
   .name('plot_runtimes')
   .description(
-    'Plot the runtimes of Wasmito and Whamm (wei) per Wasm module and analysis, read from the CSV of runtime_metrics_wasmito_wei.js and, optionally, the phases of Wasmito from the CSV of runtime_metrics_wasmito_phases.js.',
+    'Plot the runtimes of Wasmito, Whamm (wei) and Wastrumentation per Wasm module and analysis, read from the CSV of runtime_metrics_wasmito_wei.js and, optionally, the phases of Wasmito from the CSV of runtime_metrics_wasmito_phases.js.',
   )
   .argument(
     '<runtime-metrics-csv>',

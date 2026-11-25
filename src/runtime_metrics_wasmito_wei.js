@@ -2,19 +2,22 @@
 // runtime_metrics_wasmito_wei.js
 //
 // Computes the runtime statistics that plot_runtimes.js plots: for Wasmito
-// (on the WARDuino VM) and for Whamm on the optimised Wizard engine
-// ("wei + wizard opt"), per Wasm module and per analysis, the statistics of
+// (on the WARDuino VM), for Whamm on the optimised Wizard engine
+// ("wei + wizard opt") and, optionally, for Wastrumentation on the same
+// engine ("wastrumentation + wizard opt"), per Wasm module and per
+// analysis, the statistics of
 // the measured times and of the slowdowns. The result is one CSV file; no
 // plot is drawn here.
 //
 // Usage:
 //   node src/runtime_metrics_wasmito_wei.js --output <metrics-csv> \
-//        <wasmito-csv> <wei-optimised-csv>
+//        <wasmito-csv> <wei-optimised-csv> [wastrumentation-optimised-csv]
 // e.g.
 //   node src/runtime_metrics_wasmito_wei.js \
 //        --output bench_output/plots/runtime_wizard_opt/runtime_metrics.csv \
 //        bench_output/execution_time/wasmito/benchmark.csv \
-//        bench_output/execution_time/wei-optimised-x86-64/benchmark.csv
+//        bench_output/execution_time/wei-optimised-x86-64/benchmark.csv \
+//        bench_output/execution_time/wastrumentation-optimised-x86-64/benchmark.csv
 //
 // Input:
 //   <wasmito-csv>        the runs of Wasmito, with header
@@ -22,6 +25,11 @@
 //                        deploy_ms,run_ms,total_ms
 //   <wei-optimised-csv>  the runs of Whamm on the optimised Wizard engine,
 //                        with header analysis,wasm_module,time_ms
+//   [wastrumentation-optimised-csv]
+//                        the runs of the modules instrumented by
+//                        Wastrumentation on the optimised Wizard engine
+//                        (measure_runtime_wastrumentation.sh), in the same
+//                        format as <wei-optimised-csv> (optional)
 // Every row is one run. A row whose time is not a number (e.g. "TIMEOUT",
 // "ERROR" or "timeout after 600000 ms") is a failed run.
 // The time of a Wasmito run is its total_ms, so it includes the time to
@@ -29,10 +37,11 @@
 //
 // Output (--output), one row per framework, Wasm module and analysis, the
 // baseline (the run without any analysis) included:
-//   framework    the dynamic analysis framework: 'wasmito' or 'wei' (Whamm)
+//   framework    the dynamic analysis framework: 'wasmito', 'wei' (Whamm)
+//                or 'wastrumentation'
 //   runtime      the VM the framework ran on: 'warduino' or 'wizard opt'
 //   baseline     the name of the run without analysis: 'no-analysis'
-//                (Wasmito) or 'none' (Whamm)
+//                (Wasmito) or 'none' (Whamm, Wastrumentation)
 //   wasm         the Wasm module, e.g. factorial.wasm
 //   analysis     the analysis, e.g. call-graph
 //   runs         the number of successful runs
@@ -156,7 +165,7 @@ const program = new Command();
 program
   .name('runtime_metrics_wasmito_wei')
   .description(
-    'Compute, per Wasm module and analysis, the statistics of the runtimes and slowdowns of Wasmito on WARDuino and of Whamm on the optimised Wizard engine (wei + wizard opt), into one CSV file that plot_runtimes.js plots.',
+    'Compute, per Wasm module and analysis, the statistics of the runtimes and slowdowns of Wasmito on WARDuino, of Whamm on the optimised Wizard engine (wei + wizard opt) and, optionally, of Wastrumentation on the same engine, into one CSV file that plot_runtimes.js plots.',
   )
   .argument(
     '<wasmito-csv>',
@@ -166,16 +175,25 @@ program
     '<wei-optimised-csv>',
     'the benchmark CSV of Whamm on the optimised Wizard engine, with header analysis,wasm_module,time_ms (e.g. bench_output/execution_time/wei-optimised-x86-64/benchmark.csv)',
   )
+  .argument(
+    '[wastrumentation-optimised-csv]',
+    'the benchmark CSV of the modules instrumented by Wastrumentation on the optimised Wizard engine, in the format of <wei-optimised-csv> (e.g. bench_output/execution_time/wastrumentation-optimised-x86-64/benchmark.csv; optional)',
+  )
   .requiredOption(
     '-o, --output <metrics-csv>',
     'the CSV file to write the statistics to; its directory is created if it does not exist (required)',
   )
-  .action((wasmitoCsv, weiOptCsv, options) => {
+  .action((wasmitoCsv, weiOptCsv, wastrOptCsv, options) => {
     if (!isFilePath(wasmitoCsv)) {
       program.error('<wasmito-csv> is not a valid path to a CSV file');
     }
     if (!isFilePath(weiOptCsv)) {
       program.error('<wei-optimised-csv> is not a valid path to a CSV file');
+    }
+    if (wastrOptCsv !== undefined && !isFilePath(wastrOptCsv)) {
+      program.error(
+        '[wastrumentation-optimised-csv] is not a valid path to a CSV file',
+      );
     }
 
     try {
@@ -203,6 +221,18 @@ program
             'wizard opt',
           ),
         },
+        // Wastrumentation's baseline is, as wei's, Wizard on the original
+        // module ('none').
+        ...(wastrOptCsv === undefined
+          ? []
+          : [
+              computeModuleSlowdowns(
+                'wastrumentation',
+                readRuns(wastrOptCsv),
+                WHAMM_BASELINE,
+                'wizard opt',
+              ),
+            ]),
       ];
 
       const lines = [HEADER.join(','), ...tools.flatMap(toolRows)];

@@ -15,14 +15,20 @@
 #   4. measure_runtime_wei.sh --target x86-64 --mode no-optimise: the same on
 #      the non-optimised Wizard engine (results in
 #      bench_output/execution_time/wei-not-optimised-x86-64)
-#   5. plot_runtime.sh: plots the results of the steps above (plots in
+#   5. measure_runtime_wastrumentation.sh --target x86-64: instruments the
+#      Wasm-R3 modules with every Wastrumentation analysis (except the
+#      concurrency bug analyses) and runs them, and the original modules, on
+#      the optimised Wizard engine (results in
+#      bench_output/execution_time/wastrumentation-optimised-x86-64)
+#   6. plot_runtime.sh: plots the results of the steps above (plots in
 #      bench_output/plots/runtime)
 #
 # Options:
 #   --only STEP   Run only the given step. STEP is one of:
-#                   wasmito  step 1
-#                   wei      steps 2-4
-#                   plot     step 5
+#                   wasmito          step 1
+#                   wei              steps 2-4
+#                   wastrumentation  step 5
+#                   plot             step 6
 #                 Can be given several times (e.g. --only wasmito --only plot).
 #                 Without --only, every step runs.
 #
@@ -40,6 +46,7 @@ usage() {
 
 RUN_WASMITO=1
 RUN_WEI=1
+RUN_WASTRUMENTATION=1
 RUN_PLOT=1
 ONLY_GIVEN=0
 
@@ -47,21 +54,23 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --only)
             if [ $# -lt 2 ]; then
-                echo "error: --only needs a step (wasmito, wei, plot)" >&2
+                echo "error: --only needs a step (wasmito, wei, wastrumentation, plot)" >&2
                 exit 2
             fi
             if [ "$ONLY_GIVEN" -eq 0 ]; then
                 RUN_WASMITO=0
                 RUN_WEI=0
+                RUN_WASTRUMENTATION=0
                 RUN_PLOT=0
                 ONLY_GIVEN=1
             fi
             case "$2" in
                 wasmito) RUN_WASMITO=1 ;;
                 wei) RUN_WEI=1 ;;
+                wastrumentation) RUN_WASTRUMENTATION=1 ;;
                 plot) RUN_PLOT=1 ;;
                 *)
-                    echo "error: unknown step '$2' (expected wasmito, wei or plot)" >&2
+                    echo "error: unknown step '$2' (expected wasmito, wei, wastrumentation or plot)" >&2
                     exit 2
                     ;;
             esac
@@ -104,6 +113,14 @@ if [ "$RUN_WEI" -eq 1 ]; then
         done
     else
         echo "error: build_monitors_wei.sh failed, skipping the whamm runs" >&2
+        STATUS=1
+    fi
+fi
+
+if [ "$RUN_WASTRUMENTATION" -eq 1 ]; then
+    echo "> Running measure_runtime_wastrumentation.sh --target x86-64"
+    if ! "$SCRIPTS_DIR/measure_runtime_wastrumentation.sh" --target x86-64; then
+        echo "error: measure_runtime_wastrumentation.sh failed" >&2
         STATUS=1
     fi
 fi
